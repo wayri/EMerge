@@ -76,7 +76,7 @@ air2 = em.geo.subtract(air, horn_out)
 
 # --- Solver parameters --------------------------------------------------
 m.mw.set_frequency_range(90e9, 110e9, 11)  # 90–110 GHz sweep
-m.mw.set_resolution(0.25)                  # mesh resolution fraction
+m.mw.set_resolution(0.33)                  # mesh resolution fraction
 
 # --- Assemble geometry and mesh -----------------------------------------
 m.generate_mesh()

@@ -64,7 +64,7 @@ airbox = em.geo.Box(4*rad0, 4*rad0, 1.5*L, (-2*rad0, -2*rad0, 0)).background()
 
 # Sweep across 2.8–3.4 GHz (11 points) to cover the operating band
 model.mw.set_frequency_range(2.8e9, 3.4e9, 11)
-
+model.set_resolution(0.33)
 # --- Mesh generation & preview ----------------------------------------------
 model.generate_mesh()
 model.view()
@@ -76,7 +76,7 @@ port_sel = feed.boundary(exclude=('front','back'))# port faces on the feed (two 
 # --- Boundary conditions -----------------------------------------------------
 abc = model.mw.bc.AbsorbingBoundary(abc_sel)                     # open-space termination
 port_sel = model.mw.bc.LumpedPort(port_sel, 1, feed_poly.length, porth, em.ZAX ,Z0=130)  # lumped port (Z-axis)
-
+model._beta_adaptive_mesh_refinement()
 # --- Solve frequency sweep ---------------------------------------------------
 data = model.mw.run_sweep()
 

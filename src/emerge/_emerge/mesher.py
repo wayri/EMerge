@@ -76,6 +76,8 @@ class Mesher:
         self.size_definitions: list[tuple[int, float]] = []
         self.mesh_fields: list[int] = []
         self._amr_fields: list[int] = []
+        self._amr_coords: np.ndarray = None
+        self._amr_sizes: np.ndarray = None
         self.min_size: float = None
         self.max_size: float = None
         self.periodic_cell: PeriodicCell = None
@@ -286,6 +288,33 @@ class Mesher:
         for dimtag in dimtags:
             gmsh.model.mesh.setSizeFromBoundary(dimtag[0], dimtag[1], 0)
     
+    
+    def add_refinement_points(self, coords: np.ndarray, sizes: np.ndarray) -> None:
+        if self._amr_coords is None:
+            self._amr_coords = coords
+        else:
+            self._amr_coords = np.hstack((self._amr_coords, coords))
+        
+        if self._amr_sizes is None:
+            self._amr_sizes = sizes
+        else:
+            self._amr_sizes = np.hstack((self._amr_sizes, sizes))
+            
+    def set_refinement_function(self,
+                                refinement: float,
+                                gr: float = 1.5,
+                                _qf: float = 1.0):
+        xs = self._amr_coords[0,:]
+        ys = self._amr_coords[1,:]
+        zs = self._amr_coords[2,:]
+        newsize = refinement*self._amr_sizes
+        A = newsize/gr
+        B = (1-gr)/gr
+        def func(dim, tag, x, y, z, lc):
+            sizes = np.maximum(newsize, A - B * _qf*np.sqrt((x-xs)**2 + (y-ys)**2 + (z-zs)**2))
+            return min(lc,  float(np.min(sizes)))
+        gmsh.model.mesh.setSizeCallback(func)
+        
     def add_refinement_point(self,
                              coordinate: np.ndarray,
                              refinement: float,

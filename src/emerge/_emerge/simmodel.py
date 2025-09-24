@@ -242,6 +242,8 @@ class Simulation:
         self.data.sim['geos'] = {geo.name: geo for geo in _GEOMANAGER.all_geometries()}
         self.data.sim['mesh'] = self.mesh
         self.data.sim.entries.append(self.data.sim.stock)
+        
+    
     ############################################################
     #                       PUBLIC FUNCTIONS                  #
     ############################################################
@@ -557,8 +559,9 @@ class Simulation:
         Raises:
             ValueError: ValueError if no frequencies are defined.
         """
+        logger.info('Starting mesh generation phase.')
         if not regenerate:
-            logger.trace('Starting mesh generation phase.')
+            
             if not self._defined_geometries:
                 self.commit_geometry()
             
@@ -597,14 +600,6 @@ class Simulation:
         gmsh.model.occ.synchronize()
         self._set_mesh(self.mesh)
         logger.trace(' (3) Mesh routine complete')
-
-    def _reset_mesh(self):
-        #gmsh.clear()
-        gmsh.model.mesh.clear()
-        mesh = Mesh3D(self.mesher)
-        
-        self.mw.reset(False)
-        self._set_mesh(mesh)
         
     def parameter_sweep(self, clear_mesh: bool = True, **parameters: np.ndarray) -> Generator[tuple[float,...], None, None]:
         """Executes a parameteric sweep iteration.
@@ -663,68 +658,8 @@ class Simulation:
                 self._save_geometries()
         
         self.mw.cache_matrices = True
-    
-    
-    def _beta_adaptive_mesh_refinement(self, 
-                                 max_steps: int = 6,
-                                 convergence: float = 0.02,
-                                 refinement_percentage: float = 0.1,
-                                 refinement_ratio: float = 0.3,
-                                 growth_rate: float = 3) -> None:
-        """Beta implementation of Adaptive Mesh Refinement
-
-        Args:
-            max_steps (int, optional): _description_. Defaults to 6.
-            convergence (float, optional): _description_. Defaults to 0.02.
-            refinement_percentage (float, optional): _description_. Defaults to 0.1.
-            refinement_ratio (float, optional): _description_. Defaults to 0.3.
-            growth_rate (float, optional): _description_. Defaults to 3.
-        """
-        from .physics.microwave.adaptive_mesh import select_refinement_indices, reduce_point_set, compute_convergence
-   
-        max_freq = np.max(self.mw.frequencies)
         
-        regenerate = False
         
-        Smats = []
-
-        for step in range(max_steps):
-            amr_params = dict(iter_step=step)
-            self.mw._params = amr_params
-            self.data.sim.new(**amr_params)
-            
-            
-            data = self.mw._run_adaptive_mesh(step, max_freq)
-            
-            field = data.field[-1]
-            
-            Smat_new = data.scalar[-1].Sp
-            Smats.append(Smat_new)
-            if step > 0:
-                S0 = Smats[-2]
-                S1 = Smats[-1]
-                conv = compute_convergence(S0, S1)
-                logger.info(f'Convergence = {conv}')
-                if conv < convergence:
-                    logger.info('Mesh refinement passed!')
-                    break
-            error, lengths = field._solution_quality()
-                
-            idx = select_refinement_indices(error, refinement_percentage)
-            
-            idx = idx[reduce_point_set(self.mw.mesh.centers[:,idx], growth_rate, lengths[idx], refinement_ratio)]
-            centers = self.mw.mesh.centers
-            
-            self.mesher._reset_amr_points()
-            self._reset_mesh()
-            logger.debug(f'Adding {len(idx)} refinement points.')
-            for i in idx:
-                coord = centers[:,i]
-                size = lengths[i]
-                self.mesher.add_refinement_point(coord, refinement_ratio, size, growth_rate)
-            
-            self.generate_mesh(True)            
-            self.view(plot_mesh=True)
     def export(self, filename: str):
         """Exports the model or mesh depending on the extension. 
         
@@ -761,3 +696,141 @@ class Simulation:
         logger.warning('define_geometry() will be derpicated. Use commit_geometry() instead.')
         self.commit_geometry(*args)
         
+class SimulationBeta(Simulation):
+    
+    def _reset_mesh(self):
+        #gmsh.clear()
+        gmsh.model.mesh.clear()
+        mesh = Mesh3D(self.mesher)
+        
+        self.mw.reset(_reset_bc = False)
+        self._set_mesh(mesh)
+    
+    def adaptive_mesh_refinement(self, 
+                                 max_steps: int = 6,
+                                 min_refined_passes: int = 1,
+                                 convergence: float = 0.02,
+                                 magnitude_convergence: float = 2.0,
+                                 phase_convergence: float = 180,
+                                 refinement_ratio: float = 0.75,
+                                 growth_rate: float = 3.0,
+                                 minimum_refinement_percentage: float = 15.0, 
+                                 error_field_inclusion_percentage: float = 5.0,
+                                 frequency: float = None,
+                                 show_mesh: bool = False) -> SimulationDataset:
+        """ A beta-version of adaptive mesh refinement.
+
+        Convergence Criteria:
+            (1): max(abs(S[n]-S[n-1]))
+            (2): max(abs(abs(S[n]) - abs(S[n-1])))
+            (3): max(angle(S[n]/S[n-1])) * 180/π
+        
+        Args:
+            max_steps (int, optional): The maximum number of refinement steps. Defaults to 6.
+            min_refined_passes (int, optional): The minimum number of refined passes. Defaults to 1.
+            convergence (float, optional): The S-paramerter convergence (1). Defaults to 0.02.
+            magnitude_convergence (float, optional): The S-parameter magnitude convergence (2). Defaults to 2.0.
+            phase_convergence (float, optional): The S-parameter Phase convergence (3). Defaults to 180.
+            refinement_ratio (float, optional): The size reduction of mesh elements by original length. Defaults to 0.75.
+            growth_rate (float, optional): The mesh size growth rate. Defaults to 3.0.
+            minimum_refinement_percentage (float, optional): The minimum mesh size increase . Defaults to 15.0.
+            error_field_inclusion_percentage (float, optional): A percentage of tet elements to be included for refinement. Defaults to 5.0.
+            frequency (float, optional): The refinement frequency. Defaults to None.
+            show_mesh (bool, optional): If the intermediate meshes should be shown (freezes simulation). Defaults to False
+
+        Returns:
+            SimulationDataset: _description_
+        """
+        from .physics.microwave.adaptive_mesh import select_refinement_indices, reduce_point_set, compute_convergence
+        
+        max_freq = np.max(self.mw.frequencies)
+        
+        if frequency is not None:
+            max_freq = frequency
+        
+        S_matrices: list[np.ndarray] = []
+
+        last_n_tets: int = self.mesh.n_tets
+        logger.info(f'Initial mesh has {last_n_tets} tetrahedra')  
+        
+        passed = 0
+        
+        self.mw._stash_data()
+        
+        for step in range(1,max_steps+1):
+             
+            amr_params = dict(iter_step=step)
+            
+            self.mw._params = amr_params
+            self.data.sim.new(**amr_params)
+            
+            data = self.mw._run_adaptive_mesh(step, max_freq)
+            
+            field = data.field[-1]
+            
+            Smat_new = data.scalar[-1].Sp
+            S_matrices.append(Smat_new)
+            
+            if step > 1:
+                S0 = S_matrices[-2]
+                S1 = S_matrices[-1]
+                conv_complex, conv_mag, conv_phase = compute_convergence(S0, S1)
+                logger.info(f'Pass {step}: Convergence = {conv_complex:.3f}, Mag = {conv_mag:.3f}, Phase = {conv_phase:.1f} deg')
+                if conv_complex <= convergence and conv_phase < phase_convergence and conv_mag < magnitude_convergence:
+                    logger.info(f'Pass {step}: Mesh refinement passed!')
+                    passed += 1
+                else:
+                    passed = 0
+            
+            if passed >= min_refined_passes:
+                logger.info('Adaptive mesh refinement successfull')
+                break
+            
+            error, lengths = field._solution_quality()
+                
+            idx = select_refinement_indices(error, error_field_inclusion_percentage/100)
+            idx = idx[::-1]
+            
+            self.mesher.add_refinement_points(self.mw.mesh.centers[:,idx], lengths[idx])
+            
+            while True:
+                logger.debug(f'Pass {step}: Adding {len(idx)} new refinement points.')
+                
+                
+                new_ids = reduce_point_set(self.mesher._amr_coords, growth_rate, self.mesher._amr_sizes, refinement_ratio, 0.20)
+                logger.debug(f'Pass {step}: Removing {self.mesher._amr_coords.shape[1] - len(new_ids)} points from {self.mesher._amr_coords.shape[1]} to {len(new_ids)}')
+                
+                self.mesher._amr_coords = self.mesher._amr_coords[:,new_ids]
+                self.mesher._amr_sizes = self.mesher._amr_sizes[new_ids]
+                
+                self._reset_mesh()
+                
+                logger.debug(f'Pass {step}: Adding {len(idx)} refinement points.')
+                
+                self.mesher.set_refinement_function(refinement_ratio, growth_rate, 1.0)
+                
+                self.generate_mesh(True)
+                
+                percentage = (self.mesh.n_tets/last_n_tets - 1) * 100
+                logger.info(f'Pass {step}: New mesh has {self.mesh.n_tets} (+{percentage:.1f}%) tetrahedra.')  
+                
+                if percentage < minimum_refinement_percentage:
+                    logger.debug('Not enough mesh refinement, decreasing mesh size constraint.')
+                    refinement_ratio = refinement_ratio * 0.9
+                    continue
+                
+                if percentage > 2*minimum_refinement_percentage:
+                    refinement_ratio = refinement_ratio ** 0.8
+                
+                last_n_tets = self.mesh.n_tets
+                break
+            if show_mesh:
+                self.view(plot_mesh=True, volume_mesh=True)
+        
+        if passed < min_refined_passes:
+            logger.warning('Adaptive mesh refinement did not converge!')
+        
+        
+        return self.mw._reload_data()
+    
+    

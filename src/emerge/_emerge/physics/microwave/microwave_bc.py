@@ -507,6 +507,12 @@ class ModalPort(PortBC):
         self._er: np.ndarray | None = None
         self._ur: np.ndarray | None = None
     
+    def reset(self) -> None:
+        self.modes: dict[float, list[PortMode]] = defaultdict(list)
+        self.initialized: bool = False
+        self.plus_terminal: list[tuple[int, int]] = []
+        self.minus_terminal: list[tuple[int, int]] = []
+        
     def portZ0(self, k0: float) -> complex | float | None:
         return self.get_mode(k0).Z0
     

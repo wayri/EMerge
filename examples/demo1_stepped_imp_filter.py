@@ -69,7 +69,7 @@ pcb = layouter.generate_pcb(True, merge=True)
 m.commit_geometry()
 
 # We set our desired resolution (fraction of the wavelength)
-m.mw.set_resolution(0.15)
+m.mw.set_resolution(0.25)
 
 # And we define our frequency range
 m.mw.set_frequency_range(0.2e9, 8e9, 41)
@@ -106,6 +106,7 @@ if False:
     m.display.add_portmode(port1, 21)
     m.display.add_portmode(port2, 21)
     m.display.show()
+
 
 # Finally we execute the frequency domain sweep and compute the Scattering Parameters.
 sol = m.mw.run_sweep(parallel=True, n_workers=4, frequency_groups=8)

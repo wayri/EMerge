@@ -81,15 +81,14 @@ model.view()
 # We define our frequency range and a fine sampling.
 model.mw.set_frequency_range(6e9, 8e9, 21)
 
-model.mw.resolution = 0.05
-
+model.mw.set_resolution(0.05)
 # To improve simulation quality we refine the faces at the top of the cylinders.
 for stub in stubs:
-    model.mesher.set_boundary_size(box.face('back', tool=stub), 0.0002)
+    model.mesher.set_face_size(box.face('back', tool=stub), 0.0005)
 
 # Finally we may create our mesh.
 model.generate_mesh()
-
+model.view(plot_mesh=True)
 # We define our modal ports, assign the boundary condition and execute a modal analysis to solve for the
 # coaxial field mode.
 port1 = model.mw.bc.ModalPort(model.select.face.near(-lfeed, 0, h), 1, TEM=True)

@@ -123,9 +123,9 @@ class _FacePointer:
              normals: list[np.ndarray]) -> list[int]:
         tags = []
         for (d,t), o, n in zip(dimtags, origins, normals):
-            normdist = np.abs((o-self.o)@self.n)
+            normdist = np.abs((o-self.o) @ self.n)
             dotnorm = np.abs(n@self.n)
-            if normdist < 1e-3 and dotnorm > 0.99:
+            if normdist < 1e-5 and dotnorm > 0.999:
                 tags.append(t)
         return tags
     

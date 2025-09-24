@@ -20,16 +20,45 @@ import numpy as np
 from ...mth.optimized import matmul, outward_normal, cross_c
 from numba import njit, f8, c16, i8, types # type: ignore
 
+def print_sparam_matrix(S: np.ndarray):
+    """
+    Print an N x N complex S-parameter matrix in dB∠deg format.
+    Magnitude in dB rounded to 2 decimals, phase in degrees with 1 decimal.
+    """
+    S = np.asarray(S)
+    if S.ndim != 2 or S.shape[0] != S.shape[1]:
+        raise ValueError("S must be a square (N x N) complex matrix")
+
+    N = S.shape[0]
+    print("S-parameter matrix (dB ∠ deg):\n")
+
+    for i in range(N):
+        row_str = []
+        for j in range(N):
+            mag_db = 20 * np.log10(np.abs(S[i, j]) + np.finfo(float).eps)
+            phase_deg = np.degrees(np.angle(S[i, j]))
+            row_str.append(f"{mag_db:6.2f} dB ∠ {phase_deg:6.1f}°")
+        print(" | ".join(row_str))
+        
 def compute_convergence(Sold: np.ndarray, Snew: np.ndarray) -> float:
     """
     Return a single scalar: max |Snew - Sold|.
     Works for shapes (N,N) or (..., N, N); reduces over all axes.
     """
+    
     Sold = np.asarray(Sold)
     Snew = np.asarray(Snew)
+    print('OLD')
+    print_sparam_matrix(Sold)
+    print('NEW')
+    print_sparam_matrix(Snew)
     if Sold.shape != Snew.shape:
         raise ValueError("Sold and Snew must have identical shapes")
-    return float(np.abs(Snew - Sold).max())
+    #amp_conv = float(np.abs(np.abs(Snew) - np.abs(Sold)).max())
+    mag_conv = float(np.abs(np.abs(Snew)-np.abs(Sold)).max())
+    amp_conv = float(np.abs(Snew - Sold).max())
+    phase_conv = float(np.abs(np.angle(np.diag(Sold)/np.diag(Snew))).max()) * 180/np.pi
+    return amp_conv, mag_conv, phase_conv
 
 def select_refinement_indices(errors: np.ndarray, refine: float) -> np.ndarray:
     """
@@ -58,35 +87,56 @@ def select_refinement_indices(errors: np.ndarray, refine: float) -> np.ndarray:
     B = sorted_desc[:k]
 
     # Choose the smaller set (tie-breaker: use B)
-    chosen = A if A.size < B.size else B
-    chosen = B
+    chosen = A if A.size > B.size else B
+    
     # Return chosen indices sorted from largest to smallest amplitude
     mask = np.zeros(N, dtype=bool)
     mask[chosen] = True
     return sorted_desc[mask[sorted_desc]]
 
-
-def compute_size(id: int, coords: np.ndarray, q: float, dss: np.ndarray) -> float:
-    N = len(dss)
-    sizes = []
+@njit(f8[:](i8, f8[:,:], f8, f8, f8[:]), cache=True, nogil=True)
+def compute_size(id: int, coords: np.ndarray, q: float, scaler: float, dss: np.ndarray) -> float:
+    N = dss.shape[0]
+    sizes = np.zeros((N,), dtype=np.float64)-1.0
     x, y, z = coords[:,id]
     for n in range(N):
         if n == id:
+            sizes[n] = dss[n]*scaler
             continue
-        nsize = dss[n]/q - (1-q)/q * ((x-coords[0,n])**2 + (y-coords[1,n])**2 + (z-coords[2,n])**2)**0.5
-        sizes.append(nsize)
-    return np.min(sizes)
+        nsize = scaler*dss[n]/q - (1-q)/q * ((x-coords[0,n])**2 + (y-coords[1,n])**2 + (z-coords[2,n])**2)**0.5
+        sizes[n] = nsize
+    return sizes
 
-def reduce_point_set(coords: np.ndarray, q: float, dss: np.ndarray, scaler: float) -> list[int]:
-    N = len(dss)
-    candidates = []
+@njit(i8[:](f8[:,:], f8, f8[:], f8, f8), cache=True, nogil=True)
+def reduce_point_set(coords: np.ndarray, q: float, dss: np.ndarray, scaler: float, keep_percentage: float) -> list[int]:
+    N = dss.shape[0]
+    impressed_size = np.zeros((N,N), np.float64)
+    
+    include = np.ones((N,), dtype=np.int32)
+    
     for n in range(N):
-        nsize = compute_size(n, coords, q, dss)
-        if dss[n]*scaler*q**(0.4)< nsize:
-            candidates.append(0)
-        else:
-            candidates.append(1)
-    return [i for i in range(N) if candidates[i]==1]
+        impressed_size[n,:] = compute_size(n, coords, q, scaler, dss)
+    
+    for i in range(N):
+        removing = False
+        if sum(include)/N < keep_percentage:
+            break
+        for n in range(N):
+            if include[n] == 0:
+                continue
+            size_self = impressed_size[n,n]
+            from_others = np.delete(include*impressed_size[n,:],n)
+            size_other = np.min(from_others[from_others!=0])
+            if size_self > size_other * 1.2:
+                include[n] = 0
+                removing = True
+                break
+        if not removing:
+            break
+    
+    ids = np.arange(N)
+    output = ids[include==1]
+    return output
 
 
 @njit(i8[:, :](i8[:], i8[:, :]), cache=True, nogil=True)
@@ -511,7 +561,7 @@ def compute_error_single(nodes, tets, tris, edges, centers,
         Rf = matmul(uinv, compute_curl(facecoords, vertices, Ef, l_edge_ids, l_tri_ids))
         tetc = centers[:,itet].flatten()
         
-        max_elem_size[itet] = np.mean(edge_lengths[tet_to_edge[:,itet]])
+        max_elem_size[itet] = np.max(edge_lengths[tet_to_edge[:,itet]])
         
         for iface in range(4):
             i1, i2, i3 = tris[:, triids[iface]]

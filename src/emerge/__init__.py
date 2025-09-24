@@ -48,7 +48,7 @@ logger.debug('Importing modules')
 LOG_CONTROLLER._set_log_buffer()
 
 import gmsh
-from ._emerge.simmodel import Simulation
+from ._emerge.simmodel import Simulation, SimulationBeta
 from ._emerge.material import Material, FreqCoordDependent, FreqDependent, CoordDependent
 from ._emerge import bc
 from ._emerge.solver import SolverBicgstab, SolverGMRES, SolveRoutine, ReverseCuthillMckee, Sorter, SolverPardiso, SolverUMFPACK, SolverSuperLU, EMSolver

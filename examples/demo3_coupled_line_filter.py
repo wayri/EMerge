@@ -91,19 +91,20 @@ p1 = pcb.modal_port(pcb.load('p1'), width_multiplier=5, height=4 * th)
 p2 = pcb.modal_port(pcb.load('p2'), width_multiplier=5, height=4 * th)
 
 # --- Solver settings -----------------------------------------------------
-model.mw.set_resolution(0.15)            # mesh density: fraction of wavelength
+model.mw.set_resolution(0.33)            # mesh density: fraction of wavelength
 model.mw.set_frequency_range(5.2e9, 6.2e9, 31)  # 5.2–6.2 GHz, 31 points
 
 # --- Assemble geometry into simulation -----------------------------------
 model.commit_geometry()
 
 # --- Mesh refinement -----------------------------------------------------
-model.mesher.set_boundary_size(stripline, 1 * mm, 1.2)
-
+model.mesher.set_boundary_size(stripline, 0.5 * mm, 1.2)
+model.mesher.set_face_size(p1, 0.5*mm)
+model.mesher.set_face_size(p2, 0.5*mm)
 # --- Mesh generation and view --------------------------------------------
 model.generate_mesh()                    # build mesh
 model.view()                             # visualize with Gmsh viewer
-
+em.geo.PCB
 # --- Boundary conditions ------------------------------------------------
 port1 = model.mw.bc.ModalPort(p1, 1, TEM=True)
 port2 = model.mw.bc.ModalPort(p2, 2, TEM=True)

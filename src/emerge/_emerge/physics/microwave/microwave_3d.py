@@ -34,7 +34,7 @@ from .simjob import SimJob
 
 from concurrent.futures import ThreadPoolExecutor
 from loguru import logger
-from typing import Callable, Literal
+from typing import Callable, Literal, Any
 import multiprocessing as mp
 from cmath import sqrt as csqrt
 
@@ -136,14 +136,37 @@ class Microwave3D:
         self._simend: float = 0.0
 
         self.set_order(order)
+        
+        self._container: dict[str, Any] = dict()
+
 
     def reset_data(self):
         self.data = MWData()
+        self._params: dict[str, float] = dict()
+        self._simstart: float = 0.0
+        self._simend: float = 0.0
 
+    def _stash_data(self):
+        self._container['OldData'] = dict(data=self.data, params=self._params, simstart=self._simstart, simend=self._simend)
+        self.reset_data()
+    
+    def _reload_data(self) -> MWData:
+        dataset = self.data
+        self.data = self._container['OldData']['data']
+        self._params = self._container['OldData']['params']
+        self._simstart = self._container['OldData']['simstart']
+        self._simend = self._container['OldData']['simend']
+        return dataset
+    
     def reset(self, _reset_bc: bool = True):
+        
         if _reset_bc:
             self.bc.reset()
             self.bc = MWBoundaryConditionSet(None)
+        else:
+            for bc in self.bc.oftype(ModalPort):
+                bc.reset()
+            
         self.basis: FEMBasis = None
         self.solveroutine.reset()
         self.assembler.cached_matrices = None
@@ -595,7 +618,7 @@ class Microwave3D:
             Emode = np.zeros((nlf.n_field,), dtype=np.complex128)
             eigenmode = eigen_modes[:,i]
             Emode[solve_ids] = np.squeeze(eigenmode)
-            Emode = Emode * np.exp(-1j*np.angle(np.max(Emode)))
+            Emode = Emode * np.exp(-1j*np.angle(Emode[np.argmax(np.abs(Emode))]))
 
             beta_base = np.emath.sqrt(-eigen_values[i])
             beta = min(k0*np.sqrt(ermax*urmax), beta_base)
