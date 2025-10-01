@@ -1,7 +1,6 @@
 import emerge as em
 import numpy as np
-import matplotlib.pyplot as plt
-
+from emerge.plot import plot, plot_sp
 """ BANDPASS FILTER SYNTHESIS DEMO
 
 This demo synthesizes a 7-section rectangular waveguide bandpass filter
@@ -109,12 +108,9 @@ with em.Simulation('IrisSim') as sim:
 
 # --- Plot the K-inverter graph ------------------------------------------
 
-fig, ax = plt.subplots()
-ax.plot(wgaps*1000, Ks)
-ax.grid(True)
-ax.set_xlabel('Iris gap [mm]')
-ax.set_ylabel('K/Z0')
-plt.show()
+Ks = np.array(Ks)
+plot(wgaps*1000, Ks, xlabel='Iris gap[mm]', ylabel='K/Z0')
+
 
 # --- Interpolate iris widths and electrical lengths ---------------------
 Ks = np.array(Ks)
@@ -147,7 +143,7 @@ with em.Simulation('FullFilter') as mf:
     feed2 = em.geo.Box(wga, Lfeed, wgb, (-wga/2, y0 + t_thickness, 0))
 
     # Define the full filter geometry
-    mf.commit_geometry(feed1, feed2, last_iris, *(cavities + irises))
+    mf.commit_geometry()
 
     # Simulation settings and mesh
     mf.mw.set_frequency_range(f1 - 0.2e9, f2 + 0.2e9, 31)
@@ -170,23 +166,17 @@ with em.Simulation('FullFilter') as mf:
     S21 = grid.model_S(2,1,fdense)
 
     # Plot the filter response (dB)
-    fig, ax = plt.subplots()
-    ax.plot(fdense, 20*np.log10(np.abs(S11)), label='S11')
-    ax.plot(fdense, 20*np.log10(np.abs(S21)), label='S21')
-    ax.set_xlabel('Frequency [GHz]')
-    ax.set_ylabel('S-parameter [dB]')
-    ax.grid(True)
-    ax.legend()
-    plt.show()
-
+    
+    plot_sp(fdense, [S11, S21], labels=['S11','S21'])
+   
     # Visualize geometry and mode shapes
     mf.display.add_object(feed1, opacity=0.1)
     mf.display.add_object(feed2, opacity=0.1)
     for obj in irises + cavities:
         mf.display.add_object(obj, opacity=0.1)
     # Show electric field cut-plane at center frequency
-    cut = data.field.find(freq=f0).cutplane(2*mm, z=wgb/2)
+    cut = data.field.find(freq=f0).cutplane(1*mm, z=wgb/2)
     mf.display.add_surf(*cut.scalar('Ez','real'), symmetrize=True)
-    mf.display.add_portmode(p1)
-    mf.display.add_portmode(p2)
+    mf.display.add_portmode(p1, k0=data.field.find(freq=f0).k0)
+    mf.display.add_portmode(p2, k0=data.field.find(freq=f0).k0)
     mf.display.show()

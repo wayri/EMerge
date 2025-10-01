@@ -976,6 +976,7 @@ class PCB:
 
         self.thickness: float = thickness
         self._stack: list[PCBLayer] = []
+        
         if zs is not None:
             self._zs = zs
             self.thickness = np.max(zs)-np.min(zs)
@@ -1029,9 +1030,15 @@ class PCB:
         self.calc: PCBCalculator = PCBCalculator(self.thickness, self._zs, self.material, self.unit)
 
         self.name: str = _NAME_MANAGER(name, self._DEFNAME)
-        
+    
+
+    ############################################################
+    #                          PROPERTIES                     #
+    ############################################################
+
     @property
     def trace(self) -> GeoPolygon:
+        ""
         tags = []
         for trace in self.traces:
             tags.extend(trace.tags)
@@ -1040,29 +1047,36 @@ class PCB:
     
     @property
     def all_objects(self) -> list[GeoPolygon]:
-        return self.traces + self.ports
-    
-
-    def z(self, layer: int) -> float:
-        """Returns the z-height of the given layer number counter from 1 (bottom) to N (top)
-
-        Args:
-            layer (int): The layer number (1 to N)
+        """Returns all objects gnerated by the PCB layer.
 
         Returns:
-            float: the z-height
+            list[GeoPolygon]: _description_
         """
-        if layer <= 0:
-            return self._zs[layer]
-        return self._zs[layer-1]
+        return self.traces + self.ports
     
     @property
     def top(self) -> float:
+        """ The top conductor later height (z-value in meters)."""
         return self._zs[-1]
     
     @property
     def bottom(self) -> float:
+        """The bottom conductor layer height (z-value in meters)
+
+        """
         return self._zs[0]
+
+
+    ############################################################
+    #                       PRIVATE FUNCTIONS                  #
+    ############################################################
+
+    def _lumped_element(self, poly: XYPolygon, function: Callable, width: float, length: float, name: str | None = 'LumpedElement') -> None:
+        geopoly = poly._finalize(self.cs, name=name)
+        geopoly._aux_data['func'] = function
+        geopoly._aux_data['width'] = width
+        geopoly._aux_data['height'] = length
+        self.lumped_elements.append(geopoly)
     
     def _get_z(self, element: RouteElement) -> float :
         """Return the z-height of a given Route Element
@@ -1077,12 +1091,62 @@ class PCB:
             if path._has(element):
                 return path.z
         raise RouteException('Requesting z-height of route element that is not contained in a path.')
+    
+    def __call__(self, path_nr: int) -> StripPath:
+        if path_nr >= len(self.paths):
+            self.paths.append(StripPath(self))
+        return self.paths[path_nr]
+    
+    def _gen_poly(self, xys: list[tuple[float, float]], z: float, name: str | None = None) -> GeoPolygon:
+        """ Generates a GeoPoly out of a list of (x,y) coordinate tuples.
+        
+        
+        Args:
+            xys (list[tuple[float, float]]): A list of (x,y) coordinate tuples.
+            z (float, optional): The z-height of the polygon. Defaults to the top layer.
+            name (str, optional): The name of the polygon.
+            """
+        ptags = []
+        for x,y in xys:
+            px, py, pz = self.cs.in_global_cs(x*self.unit, y*self.unit, z*self.unit)
+            ptags.append(gmsh.model.occ.addPoint(px, py, pz))
+        
+        ltags = []
+        for t1, t2 in zip(ptags[:-1], ptags[1:]):
+            ltags.append(gmsh.model.occ.addLine(t1, t2))
+        ltags.append(gmsh.model.occ.addLine(ptags[-1], ptags[0]))
+        
+        tag_wire = gmsh.model.occ.addWire(ltags)
+        planetag = gmsh.model.occ.addPlaneSurface([tag_wire,])
+        poly = GeoPolygon([planetag,], name=name)
+        poly._store('thickness', self.trace_thickness)
+        return poly
+    
+
+    ############################################################
+    #                        USER FUNCTIONS                   #
+    ############################################################
+
+    def z(self, layer: int) -> float:
+        """Returns the z-height of the given layer number counter from 1 (bottom) to N (top)
+
+        Args:
+            layer (int): The layer number (1 to N)
+
+        Returns:
+            float: the z-height
+        """
+        if layer <= 0:
+            return self._zs[layer]
+        return self._zs[layer-1]
 
     def add_vias(self, *coordinates: tuple[float, float], radius: float,
                  z1: float | None = None,
                  z2: float | None = None,
                  segments: int = 6) -> None:
-        """Add a series of vias provided by a list of coordinates.
+        """Add a series of vias provided by a list of coordinates. 
+        
+        Vias will not be created yet. To generate the actual geometries use the function .generate_vias().
         
         Make sure to define the radius explicitly, otherwise the radius gets interpreted as a coordinate:
         
@@ -1118,10 +1182,7 @@ class PCB:
                     return poly
             raise ValueError(f'There is no stripline or coordinate under the name of {name}')
     
-    def __call__(self, path_nr: int) -> StripPath:
-        if path_nr >= len(self.paths):
-            self.paths.append(StripPath(self))
-        return self.paths[path_nr]
+    
     
     def determine_bounds(self, 
                          leftmargin: float = 0,
@@ -1207,13 +1268,40 @@ class PCB:
         plane.set_material(self.trace_material)
         return plane # type: ignore
     
+    def radial_stub(self, pos: tuple[float, float], length: float, angle: float, direction: tuple[float, float], Nsections: int = 8, w0: float = 0, z: float = 0, material: Material = None, name: str = None) -> None:
+        x0, y0 = pos
+        dx, dy = direction
+        
+        rx, ry = dy, -dx
+
+        points = []
+        if w0==0:
+            points.append(pos)
+        else:
+            points.append((x0-rx*w0/2, y0-ry*w0/2))
+            points.append((x0+rx*w0/2, y0+ry*w0/2))
+        
+        angs = np.linspace(-angle/2, angle/2, Nsections)*np.pi/180
+        c0 = x0 + 1j*y0
+        vec = length*dx + 1j*length*dy
+        for a in angs:
+            p = c0 + vec*np.exp(1j*a)
+            points.append((p.real, p.imag))
+        
+        xs, ys = zip(*points)
+        self.add_poly(xs, ys, z, material, name)
+        
     def generate_pcb(self, 
                 split_z: bool = True,
                 merge: bool = True) -> list[GeoVolume] | GeoVolume:
         """Generate the PCB Block object
 
+        Args:
+            split_z (bool, optional): If a PCB consisting of a thickness, material and n_layers should be split in sub domains. Defaults to True
+            merge: (bool, optional): If an output list of multiple volumes should be merged into a single object.
+        
         Returns:
-            GeoVolume: The PCB Block
+            GeoVolume | List[GeoVolume]: The PCB Block or blocks
         """
         x0, y0, z0 = self.origin*self.unit
         
@@ -1247,7 +1335,7 @@ class PCB:
         box = change_coordinate_system(box, self.cs)
         return box # type: ignore
 
-    def generate_air(self, height: float, name: str = 'PCBAirbox') -> GeoVolume:
+    def generate_air(self, height: float, name: str = 'PCBAirbox', bottom: bool = False) -> GeoVolume:
         """Generate the Air Block object
 
         This requires that the width, depth and origin are deterimed. This 
@@ -1256,11 +1344,16 @@ class PCB:
         Returns:
             GeoVolume: The PCB Block
         """
+        dz = 0
+        
         x0, y0, z0 = self.origin*self.unit
+        if bottom:
+            dz = z0-self.thickness*self.unit-height*self.unit
+            
         box = Box(self.width*self.unit, 
                   self.length*self.unit, 
                   height*self.unit, 
-                  position=(x0,y0,z0),
+                  position=(x0,y0,z0+dz),
                   name=name)
         box = change_coordinate_system(box, self.cs)
         return box # type: ignore
@@ -1334,16 +1427,9 @@ class PCB:
         
         return poly
 
-    def _lumped_element(self, poly: XYPolygon, function: Callable, width: float, length: float, name: str | None = 'LumpedElement') -> None:
-        geopoly = poly._finalize(self.cs, name=name)
-        geopoly._aux_data['func'] = function
-        geopoly._aux_data['width'] = width
-        geopoly._aux_data['height'] = length
-        self.lumped_elements.append(geopoly)
-
     def modal_port(self,
                   point: StripLine,
-                  height: float,
+                  height: float | tuple[float, float],
                   width_multiplier: float = 5.0,
                   width: float | None = None,
                   name: str | None = 'ModalPort'
@@ -1362,8 +1448,12 @@ class PCB:
         Returns:
             GeoSurface: The GeoSurface object that can be used for the waveguide.
         """
-        
-        height = (self.thickness + height)
+        if isinstance(height, tuple):
+            dz, height = height
+        else:
+            dz = 0
+            
+        height = (self.thickness + height + dz)
         
         if width is not None:
             W = width
@@ -1373,7 +1463,7 @@ class PCB:
         ds = point.dirright
         x0 = point.x - ds[0]*W/2
         y0 = point.y - ds[1]*W/2
-        z0 =  - self.thickness
+        z0 =  - self.thickness - dz
         ax1 = np.array([ds[0], ds[1], 0])*self.unit*W
         ax2 = np.array([0,0,1])*height*self.unit
 
@@ -1428,28 +1518,9 @@ class PCB:
         """
         if material is None:
             material = self.trace_material
-        poly = PCBPoly(xs, ys, z, material,name=name)
+        poly = PCBPoly(xs, ys, z, material, name=name)
         
         self.polies.append(poly)
-        
-
-    def _gen_poly(self, xys: list[tuple[float, float]], z: float, name: str | None = None) -> GeoPolygon:
-        """ Generates a GeoPoly out of a list of (x,y) coordinate tuples"""
-        ptags = []
-        for x,y in xys:
-            px, py, pz = self.cs.in_global_cs(x*self.unit, y*self.unit, z*self.unit)
-            ptags.append(gmsh.model.occ.addPoint(px, py, pz))
-        
-        ltags = []
-        for t1, t2 in zip(ptags[:-1], ptags[1:]):
-            ltags.append(gmsh.model.occ.addLine(t1, t2))
-        ltags.append(gmsh.model.occ.addLine(ptags[-1], ptags[0]))
-        
-        tag_wire = gmsh.model.occ.addWire(ltags)
-        planetag = gmsh.model.occ.addPlaneSurface([tag_wire,])
-        poly = GeoPolygon([planetag,], name=name)
-        poly._store('thickness', self.trace_thickness)
-        return poly
     
     @overload
     def compile_paths(self, merge: Literal[True]) -> GeoSurface: ...

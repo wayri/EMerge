@@ -175,11 +175,11 @@ class Mesher:
         gmsh.model.mesh.set_periodic(2, face2.tags, face1.tags, translation)
 
     def set_algorithm(self,
-                      obj: GeoObject,
                       algorithm: Algorithm3D) -> None:
-        for tag in obj.tags:
-            gmsh.model.mesh.setAlgorithm(obj.dim, tag, algorithm.value)
-            
+        
+        gmsh.option.setNumber("General.NumThreads", 16)
+        gmsh.option.setNumber("Mesh.Algorithm3D", algorithm.value)
+
     def set_periodic_cell(self, cell: PeriodicCell, excluded_faces: Selection | None = None):
         """Sets the periodic cell information based on the PeriodicCell class object"""
         if excluded_faces is None:
@@ -310,6 +310,9 @@ class Mesher:
         newsize = refinement*self._amr_sizes
         A = newsize/gr
         B = (1-gr)/gr
+        from numba import njit, i8, f8
+
+        @njit(f8(i8,i8,f8,f8,f8,f8), nogil=True, fastmath=True, parallel=False)
         def func(dim, tag, x, y, z, lc):
             sizes = np.maximum(newsize, A - B * _qf*np.sqrt((x-xs)**2 + (y-ys)**2 + (z-zs)**2))
             return min(lc,  float(np.min(sizes)))
@@ -330,7 +333,7 @@ class Mesher:
     def set_boundary_size(self, 
                           boundary: GeoObject | Selection | Iterable, 
                           size:float,
-                          growth_rate: float = 1.4,
+                          growth_rate: float = 3,
                           max_size: float | None = None) -> None:
         """Refine the mesh size along the boundary of a conducting surface
 
@@ -352,8 +355,8 @@ class Mesher:
             self._check_ready()
             max_size = self.max_size
         
-        growth_distance = np.log10(max_size/size)/np.log10(growth_rate)
-        
+        #growth_distance = np.log10(max_size/size)/np.log10(growth_rate)
+        growth_distance = (growth_rate*max_size - size)/(growth_rate-1)
         logger.debug(f'Setting boundary size for region {dimtags} to {size*1000:.3f}mm, GR={growth_rate:.3f}, dist={growth_distance*1000:.2f}mm, Max={max_size*1000:.3f}mm')
         
         nodes = gmsh.model.getBoundary(dimtags, combined=False, oriented=False, recursive=False)
@@ -370,7 +373,7 @@ class Mesher:
         gmsh.model.mesh.field.setNumber(thtag, "SizeMin", size)
         gmsh.model.mesh.field.setNumber(thtag, "SizeMax", max_size)
         gmsh.model.mesh.field.setNumber(thtag, "DistMin", size)
-        gmsh.model.mesh.field.setNumber(thtag, "DistMax", growth_distance*size)
+        gmsh.model.mesh.field.setNumber(thtag, "DistMax", growth_distance)
     
         self.mesh_fields.append(thtag)
 

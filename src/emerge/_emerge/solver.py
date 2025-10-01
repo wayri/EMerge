@@ -805,7 +805,7 @@ class SmartARPACK_BMA(EigSolver):
                     energies.append(energy)
         
         #Sort solutions on mode energy
-        val, mode, energy = zip(*sorted(zip(tot_eigen_values,tot_eigen_modes,energies), key=lambda x: x[2], reverse=True))
+        val, mode, energy = zip(*sorted(zip(tot_eigen_values, tot_eigen_modes, energies), key=lambda x: x[2], reverse=True))
         eigen_values = np.array(val[:nmodes])
         eigen_modes = np.array(mode[:nmodes]).T
 

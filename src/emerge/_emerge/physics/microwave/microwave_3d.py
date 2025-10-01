@@ -19,13 +19,16 @@ from ...mesher import Mesher
 from ...material import Material
 from ...mesh3d import Mesh3D
 from ...coord import Line
-from ...geometry import GeoSurface, _GEOMANAGER
+from ...geometry import GeoSurface
 from ...elements.femdata import FEMBasis
 from ...elements.nedelec2 import Nedelec2
 from ...solver import DEFAULT_ROUTINE, SolveRoutine
 from ...system import called_from_main_function
 from ...selection import FaceSelection
 from ...settings import Settings
+from ...simstate import SimState
+from ...logsettings import DEBUG_COLLECTOR
+
 from .microwave_bc import MWBoundaryConditionSet, PEC, ModalPort, LumpedPort, PortBC
 from .microwave_data import MWData
 from .assembly.assembler import Assembler
@@ -37,7 +40,7 @@ from loguru import logger
 from typing import Callable, Literal, Any
 import multiprocessing as mp
 from cmath import sqrt as csqrt
-
+from itertools import product
 import numpy as np
 import threading
 import time
@@ -54,16 +57,14 @@ def run_job_multi(job: SimJob) -> SimJob:
     Returns:
         SimJob: The solved SimJob
     """
-    routine = DEFAULT_ROUTINE._configure_routine('MP')
+    nr = int(mp.current_process().name.split('-')[1])
+    routine = DEFAULT_ROUTINE._configure_routine('MP', proc_nr=nr)
     for A, b, ids, reuse, aux in job.iter_Ab():
         solution, report = routine.solve(A, b, ids, reuse, id=job.id)
         report.add(**aux)
         job.submit_solution(solution, report)
     return job
 
-def _init_worker():
-    nr = int(mp.current_process().name.split('-')[1])
-    DEFAULT_ROUTINE._configure_routine(proc_nr=nr)
 
 def _dimstring(data: list[float] | np.ndarray) -> str:
     """A String formatter for dimensions in millimeters
@@ -111,14 +112,17 @@ class Microwave3D:
     formulation.
 
     """
-    def __init__(self, mesher: Mesher, settings: Settings, mwdata: MWData, order: int = 2):
+    def __init__(self, state: SimState, mesher: Mesher, settings: Settings, order: int = 2):
+        
+        self._settings: Settings = settings
+        
         self.frequencies: list[float] = []
         self.current_frequency = 0
         self.order: int = order
-        self.resolution: float = 1
-        self._settings: Settings = settings
+        self.resolution: float = 0.33
+        
         self.mesher: Mesher = mesher
-        self.mesh: Mesh3D = Mesh3D(self.mesher)
+        self._state: SimState = state
 
         self.assembler: Assembler = Assembler(self._settings)
         self.bc: MWBoundaryConditionSet = MWBoundaryConditionSet(None)
@@ -128,40 +132,25 @@ class Microwave3D:
 
         ## States
         self._bc_initialized: bool = False
-        self.data: MWData = mwdata
-
-        ## Data
-        self._params: dict[str, float] = dict()
         self._simstart: float = 0.0
         self._simend: float = 0.0
-
-        self.set_order(order)
         
         self._container: dict[str, Any] = dict()
 
-
-    def reset_data(self):
-        self.data = MWData()
-        self._params: dict[str, float] = dict()
-        self._simstart: float = 0.0
-        self._simend: float = 0.0
-
-    def _stash_data(self):
-        self._container['OldData'] = dict(data=self.data, params=self._params, simstart=self._simstart, simend=self._simend)
-        self.reset_data()
+    @property
+    def _params(self) -> dict[str, float]:
+        return self._state.params
     
-    def _reload_data(self) -> MWData:
-        dataset = self.data
-        self.data = self._container['OldData']['data']
-        self._params = self._container['OldData']['params']
-        self._simstart = self._container['OldData']['simstart']
-        self._simend = self._container['OldData']['simend']
-        return dataset
+    @property
+    def mesh(self) -> Mesh3D:
+        return self._state.mesh
+    
+    @property
+    def data(self) -> MWData:
+        return self._state.data.mw
     
     def reset(self, _reset_bc: bool = True):
-        
         if _reset_bc:
-            self.bc.reset()
             self.bc = MWBoundaryConditionSet(None)
         else:
             for bc in self.bc.oftype(ModalPort):
@@ -170,21 +159,6 @@ class Microwave3D:
         self.basis: FEMBasis = None
         self.solveroutine.reset()
         self.assembler.cached_matrices = None
-
-    def set_order(self, order: int) -> None:
-        """Sets the order of the basis functions used. Currently only supports second order.
-
-        Args:
-            order (int): The order to use.
-
-        Raises:
-            ValueError: An error if a wrong order is used.
-        """
-        if order not in (2,):
-            raise ValueError(f'Order {order} not supported. Only order-2 allowed.')
-        
-        self.order = order
-        self.resolution = {1: 0.15, 2: 0.3}[order]
 
     @property
     def nports(self) -> int:
@@ -242,7 +216,15 @@ class Microwave3D:
             self.frequencies = list(frequency)
         else:
             self.frequencies = [frequency]
-
+            
+        # Safety tests
+        if len(self.frequencies) > 200:
+            DEBUG_COLLECTOR.add_report(f'More than 200 frequency points are detected ({len(frequency)}). This may cause slow simulations. Consider using Vector Fitting to subsample S-parameters.')
+        if min(self.frequencies) < 1e6:
+            DEBUG_COLLECTOR.add_report(f'A frequency smaller than 1MHz has been detected ({min(frequency)} Hz). Perhaps you forgot to include usints like 1e6 for MHz etc.')
+        if max(self.frequencies) > 1e12:
+            DEBUG_COLLECTOR.add_report(f'A frequency greater than THz has been detected ({min(frequency)} Hz). Perhaps you double counted frequency units like twice 1e6 for MHz etc.')
+        
         self.mesher.max_size = self.resolution * 299792458 / max(self.frequencies)
         self.mesher.min_size = 0.1 * self.mesher.max_size
 
@@ -384,29 +366,6 @@ class Microwave3D:
             logger.trace(f' - Port[{port.port_number}] integration line {start} -> {end}.')
         
         port.v_integration = True
-    
-    def _compute_integration_line(self, group1: list[int], group2: list[int]) -> tuple[np.ndarray, np.ndarray]:
-        """Computes an integration line for two node island groups by finding the closest two nodes.
-        
-        This method is used for the modal TEM analysis to find an appropriate voltage integration path
-        by looking for the two closest points for the two conductor islands that where discovered.
-
-        Currently it defaults to 11 integration line points.
-
-        Args:
-            group1 (list[int]): The first island node group
-            group2 (list[int]): The second island node group
-
-        Returns:
-            centers (np.ndarray): The center points of the line segments
-            dls (np.ndarray): The delta-path vectors for each line segment.
-        """
-        nodes1 = self.mesh.nodes[:,group1]
-        nodes2 = self.mesh.nodes[:,group2]
-        path = shortest_path(nodes1, nodes2, 21)
-        centres = (path[:,1:] + path[:,:-1])/2
-        dls = path[:,1:] - path[:,:-1]
-        return centres, dls
 
     def _find_tem_conductors(self, port: ModalPort, sigtri: np.ndarray) -> tuple[list[int], list[int]]:
         ''' Returns two lists of global node indices corresponding to the TEM port conductors.
@@ -472,7 +431,8 @@ class Microwave3D:
                     min_term = i
             
             if plus_term is None or min_term is None:
-                raise ValueError(f' - Found {len(pec_islands)} PEC islands without a terminal definition. Please use .set_terminals() to define which conductors are which polarity.')    
+                logger.error(f' - Found {len(pec_islands)} PEC islands without a terminal definition. Please use .set_terminals() to define which conductors are which polarity, or define the integration line manually.') 
+                return None, None  
             logger.debug(f'Positive island = {pec_island_tags[plus_term]}')
             logger.debug(f'Negative island = {pec_island_tags[min_term]}')
             pec_islands = [pec_islands[plus_term], pec_islands[min_term]]
@@ -502,7 +462,11 @@ class Microwave3D:
             if not bc.mixed_materials and bc.initialized:
                 continue
             
-            self.modal_analysis(bc, 1, False, bc.TEM, freq=freq)
+            if bc.forced_modetype=='TEM':
+                TEM = True
+            else:
+                TEM = False
+            self.modal_analysis(bc, 1, direct=False, freq=freq, TEM=TEM)
 
     def modal_analysis(self, 
                        port: ModalPort, 
@@ -596,7 +560,7 @@ class Microwave3D:
             target_kz = k0*target_neff
         
         if target_kz is None:
-            if TEM:
+            if TEM or port.forced_modetype=='TEM':
                 target_kz = ermean*urmean*1.1*k0
             else:
                 
@@ -625,12 +589,21 @@ class Microwave3D:
 
             residuals = -1
 
+            if port._get_alignment_vector(i) is not None:
+                vec = port._get_alignment_vector(i)
+                xyz_centers = self.mesh.tri_centers[:,self.mesh.get_triangles(port.tags)]
+                E_centers = np.mean(nlf.interpolate_Ef(Emode)(xyz_centers[0,:], xyz_centers[1,:], xyz_centers[2,:]), axis=1)
+                EdotVec = vec[0]*E_centers[0] + vec[1]*E_centers[1] + vec[2]*E_centers[2]
+                if EdotVec.real < 0:
+                    logger.debug(f'Mode polarization along alignment axis {vec} = {EdotVec.real:.3f}, inverting.')
+                    Emode = -Emode
+                  
             portfE = nlf.interpolate_Ef(Emode)
             portfH = nlf.interpolate_Hf(Emode, k0, ur, beta)
-
             P = compute_avg_power_flux(nlf, Emode, k0, ur, beta)
 
-            mode = port.add_mode(Emode, portfE, portfH, beta, k0, residuals, TEM=TEM, freq=freq)
+            mode = port.add_mode(Emode, portfE, portfH, beta, k0, residuals, number=i, freq=freq)
+            
             if mode is None:
                 continue
             
@@ -639,21 +612,40 @@ class Microwave3D:
             Ez = np.max(np.abs(Efz))
             Exy = np.max(np.abs(Efxy))
             
-            if Ez/Exy < 1e-1 and not TEM:
-                logger.debug('Low Ez/Et ratio detected, assuming TE mode')
-                mode.modetype = 'TE'
-            elif Ez/Exy > 1e-1 and not TEM:
-                logger.debug('High Ez/Et ratio detected, assuming TM mode')
-                mode.modetype = 'TM'
-            elif TEM:
-                G1, G2 = self._find_tem_conductors(port, sigtri=cond)
-                cs, dls = self._compute_integration_line(G1,G2)
-                logger.debug(f'Integrating portmode from {cs[:,0]} to {cs[:,-1]}')
+            if port.forced_modetype == 'TEM' or TEM:
                 mode.modetype = 'TEM'
-                Ex, Ey, Ez = portfE(cs[0,:], cs[1,:], cs[2,:])
-                voltage = np.sum(Ex*dls[0,:] + Ey*dls[1,:] + Ez*dls[2,:])
+                
+                if len(port.vintline)>0:
+                    line = port.vintline[0]
+                else:  
+                    G1, G2 = self._find_tem_conductors(port, sigtri=cond)
+                    if G1 is None or G2 is None:
+                        logger.warning('Skipping characteristic impedance calculation.')
+                        continue
+                    
+                    nodes1 = self.mesh.nodes[:,G1]
+                    nodes2 = self.mesh.nodes[:,G2]
+                    path = shortest_path(nodes1, nodes2, 2)
+                    line = Line.from_points(path[:,0], path[:,1], 21)
+                    port.vintline.append(line)
+                
+                cs = np.array(line.cmid)
+
+                logger.debug(f'Integrating portmode from {cs[:,0]} to {cs[:,-1]}')
+                voltage = line.line_integral(portfE)
+                # Align mode polarity to positive voltage
+                if voltage < 0:
+                    mode.polarity = mode.polarity * -1
+                    
                 mode.Z0 = abs(voltage**2/(2*P))
                 logger.debug(f'Port Z0 = {mode.Z0}')
+            elif Ez/Exy < 1e-1 or port.forced_modetype=='TE':
+                logger.debug('Low Ez/Et ratio detected, assuming TE mode')
+                mode.modetype = 'TE'
+            elif Ez/Exy > 1e-1 or port.forced_modetype=='TM':
+                logger.debug('High Ez/Et ratio detected, assuming TM mode')
+                mode.modetype = 'TM'
+            
 
             mode.set_power(P*port._qmode(k0)**2)
         
@@ -833,7 +825,7 @@ class Microwave3D:
                     "if __name__ == '__main__' guard in the top-level script."
                 )
             # Start parallel pool
-            with mp.Pool(processes=n_workers, initializer=_init_worker) as pool:
+            with mp.Pool(processes=n_workers) as pool:
                 for i_group, fgroup in enumerate(freq_groups):
                     logger.debug(f'Precomputing group {i_group}.')
                     jobs = []
@@ -1068,13 +1060,19 @@ class Microwave3D:
         """
         if self.basis is None:
             raise SimulationError('Cannot post-process. Simulation basis function is undefined.')
+        
         mesh = self.mesh
         all_ports = self.bc.oftype(PortBC)
         port_numbers = [port.port_number for port in all_ports]
         
         logger.info('Computing S-parameters')
         
-
+        not_conserved = False
+        
+        single_corr = self._settings.mw_cap_sp_single
+        col_corr = self._settings.mw_cap_sp_col
+        recip_corr = self._settings.mw_recip_sp
+        
         for job, mats in zip(results, materials):
             freq = job.freq
             er, ur, cond = mats
@@ -1102,6 +1100,7 @@ class Microwave3D:
 
             logger.info(f'Post Processing simulation frequency = {freq/1e9:.3f} GHz') 
 
+            
             # Recording port information
             for active_port in all_ports:
                 port_tets = self.mesh.get_face_tets(active_port.tags)
@@ -1147,10 +1146,35 @@ class Microwave3D:
                     pfield, pmode = self._compute_s_data(bc, fieldf,tri_vertices, k0, ertri[:,:,tris], urtri[:,:,tris])
                     logger.debug(f'[{bc.port_number}] Passive amplitude = {np.abs(pfield):.3f}')
                     scalardata.write_S(bc.port_number, active_port.port_number, pfield/Pout)
+                    if abs(pfield/Pout) > 1.0:
+                        logger.warning(f'S-parameter > 1.0 detected: {np.abs(pfield/Pout)}')
+                        not_conserved = True
                 active_port.active=False
             
+            
             fielddata.set_field_vector()
+            
+            N = scalardata.Sp.shape[1]
+            
+            # Enforce reciprocity
+            if recip_corr:
+                scalardata.Sp = (scalardata.Sp + scalardata.Sp.T)/2
+            
+            # Enforce energy conservation
+            if col_corr:
+                for j in range(N):
+                    scalardata.Sp[:,j] = scalardata.Sp[:,j] / max(1.0, np.sum(np.abs(scalardata.Sp[:,j])**2))
+            
+            # Enforce S-parameter limit to 1.0
+            if single_corr:
+                for i,j in product(range(N), range(N)):
+                    scalardata.Sp[i,j] = scalardata.Sp[i,j] / max(1.0, np.abs(scalardata.Sp[i,j]))
+                    
+                    
 
+        if not_conserved:
+            DEBUG_COLLECTOR.add_report('S-parameters with an amplitude greater than 1.0 detected. This could be due to a ModalPort with the wrong mode type.\n' +
+                                       'Specify the type of mode (TE/TM/TEM) in the constructor using ModalPort(..., modetype=\'TE\') for example.')
         logger.info('Simulation Complete!')
         self._simend = time.time()    
         logger.info(f'Elapsed time = {(self._simend-self._simstart):.2f} seconds.')
@@ -1176,6 +1200,7 @@ class Microwave3D:
             tuple[complex, complex]: _description_
         """
         from .sparam import sparam_field_power, sparam_mode_power
+        
         if bc.v_integration:
             if bc.vintline is None:
                 raise SimulationError('Trying to compute characteristic impedance but no integration line is defined.')
@@ -1201,7 +1226,7 @@ class Microwave3D:
         else:
             if bc.modetype(k0) == 'TEM':
                 const = 1/(np.sqrt((urp[0,0,:] + urp[1,1,:] + urp[2,2,:])/(erp[0,0,:] + erp[1,1,:] + erp[2,2,:])))
-            if bc.modetype(k0) == 'TE':
+            elif bc.modetype(k0) == 'TE':
                 const = 1/((urp[0,0,:] + urp[1,1,:] + urp[2,2,:])/3)
             elif bc.modetype(k0) == 'TM':
                 const = 1/((erp[0,0,:] + erp[1,1,:] + erp[2,2,:])/3)

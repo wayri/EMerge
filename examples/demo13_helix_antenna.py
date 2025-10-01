@@ -76,7 +76,6 @@ port_sel = feed.boundary(exclude=('front','back'))# port faces on the feed (two 
 # --- Boundary conditions -----------------------------------------------------
 abc = model.mw.bc.AbsorbingBoundary(abc_sel)                     # open-space termination
 port_sel = model.mw.bc.LumpedPort(port_sel, 1, feed_poly.length, porth, em.ZAX ,Z0=130)  # lumped port (Z-axis)
-model._beta_adaptive_mesh_refinement()
 # --- Solve frequency sweep ---------------------------------------------------
 data = model.mw.run_sweep()
 

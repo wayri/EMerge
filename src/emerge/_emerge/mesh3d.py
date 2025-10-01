@@ -25,6 +25,7 @@ from .geometry import GeoVolume
 from loguru import logger
 from .bc import Periodic
 from .material import Material
+from .logsettings import DEBUG_COLLECTOR
 
 _MISSING_ID: int = -1234
 
@@ -78,9 +79,7 @@ class Mesh3D(Mesh):
     are mapped to mesh elements is managed by the FEMBasis class.
     
     """
-    def __init__(self, mesher: Mesher):
-        
-        self.geometry: Mesher = mesher
+    def __init__(self):
 
         # All spatial objects
         self.nodes: np.ndarray = np.array([])
@@ -186,6 +185,8 @@ class Mesh3D(Mesh):
         i11, i21, i31 = tuple(sorted((int(i1), int(i2), int(i3))))
         output = self.inv_tris.get(tuple(sorted((int(i1), int(i2), int(i3)))), None)
         if output is None:
+            DEBUG_COLLECTOR.add_report(f'Mesh3D: The program is crashed due to a non existing triangle {i11}, {i21}, {i31}. This occurs often if surfaces stick out of the 3D domain.\n' + 
+                                       'Only 3D volumes can be meshed. Parts or entire simulations that are two dimensional will cause this problem.')
             raise ValueError(f'There is no triangle with indices {i11}, {i21}, {i31}')
         return output
     
@@ -652,8 +653,6 @@ class Mesh3D(Mesh):
         * Only the connectivity of the supplied edges is considered.  
         In particular, vertices that never occur in `edges` do **not** create extra
         components.
-        * Runtime is *O*(N + V), with N = number of edges, V = number of
-        distinct vertices.  No external libraries are needed.
         """
         edges = self.edges[:,edge_ids]
         if edges.ndim != 2 or edges.shape[0] != 2:
@@ -692,6 +691,7 @@ class Mesh3D(Mesh):
                 group += list(new_edges)
                 ungrouped.difference_update(new_edges)
 
+        groups = sorted(groups, key = lambda x: sum(self.edge_lengths[np.array(x)]))
         return groups
 
     def boundary_surface(self, 

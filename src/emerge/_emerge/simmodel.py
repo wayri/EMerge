@@ -16,19 +16,20 @@
 # <https://www.gnu.org/licenses/>.
 
 from __future__ import annotations
-from .mesher import Mesher, unpack_lists
-from .geometry import GeoObject, _GEOMANAGER
+from .mesher import Mesher
+from .geometry import GeoObject
 from .geo.modeler import Modeler
 from .physics.microwave.microwave_3d import Microwave3D
 from .mesh3d import Mesh3D
-from .selection import Selector, FaceSelection, Selection
-from .logsettings import LOG_CONTROLLER
-from .plot.pyvista import PVDisplay
+from .selection import Selector, Selection
 from .dataset import SimulationDataset
+from .logsettings import LOG_CONTROLLER, DEBUG_COLLECTOR
+from .plot.pyvista import PVDisplay
 from .periodic import PeriodicCell
 from .cacherun import get_build_section, get_run_section
 from .settings import DEFAULT_SETTINGS, Settings
 from .solver import EMSolver, Solver
+from .simstate import SimState
 from typing import Literal, Generator, Any
 from loguru import logger
 import numpy as np
@@ -40,7 +41,7 @@ import joblib
 from atexit import register
 import signal
 from .. import __version__
-
+from .mesher import Algorithm3D
 ############################################################
 #                   EXCEPTION DEFINITIONS                  #
 ############################################################
@@ -62,6 +63,7 @@ class VersionError(Exception):
 ############################################################
 #                 BASE 3D SIMULATION MODEL                 #
 ############################################################
+
 
 class Simulation:
 
@@ -94,16 +96,12 @@ class Simulation:
         self.mesher: Mesher = Mesher()
         self.modeler: Modeler = Modeler()
         
-        self.mesh: Mesh3D = Mesh3D(self.mesher)
+        self.state: SimState = SimState()
         self.select: Selector = Selector()
-        
         self.settings: Settings = DEFAULT_SETTINGS
 
         ## Display
-        self.display: PVDisplay = PVDisplay(self.mesh)
-        
-        ## Dataset
-        self.data: SimulationDataset = SimulationDataset()
+        self.display: PVDisplay = PVDisplay(self.state)
         
         ## STATES
         self.__active: bool = False
@@ -115,7 +113,7 @@ class Simulation:
         self._file_lines: str = ''
         
         ## Physics
-        self.mw: Microwave3D = Microwave3D(self.mesher, self.settings, self.data.mw)
+        self.mw: Microwave3D = Microwave3D(self.state, self.mesher, self.settings)
 
         self._initialize_simulation()
 
@@ -125,15 +123,24 @@ class Simulation:
             self.set_write_log()
 
         LOG_CONTROLLER._flush_log_buffer()
-        
         LOG_CONTROLLER._sys_info()
-        
-        self._update_data()
-    
+
+        self.__post_init__()
 
     ############################################################
     #                       PRIVATE FUNCTIONS                  #
     ############################################################
+
+    @property
+    def data(self) -> SimulationDataset:
+        return self.state.data
+    
+    @property
+    def mesh(self) -> Mesh3D:
+        return self.state.mesh
+    
+    def __post_init__(self):
+        pass
 
     def __setitem__(self, name: str, value: Any) -> None:
         """Store data in the current data container"""
@@ -181,13 +188,13 @@ class Simulation:
     def _initialize_simulation(self):
         """Initializes the Simulation data and GMSH API with proper shutdown routines.
         """
-        _GEOMANAGER.sign_in(self.modelname)
+        self.state.init(self.modelname)
         
         # If GMSH is not yet initialized (Two simulation in a file)
         if gmsh.isInitialized() == 0:
             logger.debug('Initializing GMSH')
-            gmsh.initialize()
             
+            gmsh.initialize()
             # Set an exit handler for Ctrl+C cases
             self._install_signal_handlers()
 
@@ -200,7 +207,6 @@ class Simulation:
         # Create a new GMSH model or load it
         if not self.load_file:
             gmsh.model.add(self.modelname)
-            self.data: SimulationDataset = SimulationDataset()
         else:
             self.load()
 
@@ -213,6 +219,11 @@ class Simulation:
         if not self.__active:
             return
         logger.debug('Exiting program')
+        
+        if DEBUG_COLLECTOR.any_warnings:
+            logger.warning('EMerge simulation warnings:')
+        for i, report in DEBUG_COLLECTOR.all_reports():
+            logger.warning(f'{i}: {report}')
         # Save the file first
         if self.save_file:
             self.save()
@@ -223,25 +234,6 @@ class Simulation:
         logger.debug('GMSH Shut down successful')
         # set the state to active
         self.__active = False
-
-    def _update_data(self) -> None:
-        """Writes the stored physics data to each phyics class insatnce"""
-        self.mw.data = self.data.mw
-    
-    def _set_mesh(self, mesh: Mesh3D) -> None:
-        """Set the current model mesh to a given mesh."""
-        logger.trace(f'Setting {mesh} as model mesh')
-        self.mesh = mesh
-        self.mw.mesh = mesh
-        self.display._mesh = mesh
-    
-    def _save_geometries(self) -> None:
-        """Saves the current geometry state to the simulatin dataset
-        """
-        logger.trace('Storing geometries in data.sim')
-        self.data.sim['geos'] = {geo.name: geo for geo in _GEOMANAGER.all_geometries()}
-        self.data.sim['mesh'] = self.mesh
-        self.data.sim.entries.append(self.data.sim.stock)
         
     
     ############################################################
@@ -384,6 +376,11 @@ class Simulation:
 
         raise VersionError(msg)
 
+    def activate(self, _indx: int | None = None, **variables) -> Simulation:
+        """Searches for the permutaions of parameter sweep variables and sets the current geometry to the provided set."""
+        self.state.activate(_indx, **variables)
+        return self
+    
     def save(self) -> None:
         """Saves the current model in the provided project directory."""
         # Ensure directory exists
@@ -405,7 +402,7 @@ class Simulation:
         logger.info(f"Saved mesh to: {mesh_path}")
 
         # Pack and save data
-        dataset = dict(simdata=self.data, mesh=self.mesh)
+        dataset = self.state.get_dataset()
         data_path = self.modelpath / 'simdata.emerge'
         
         joblib.dump(dataset, str(data_path))
@@ -426,17 +423,16 @@ class Simulation:
         if not mesh_path.exists() or not data_path.exists():
             raise FileNotFoundError("Missing required mesh or data file.")
 
-        # Load mesh
+        # Load GMSH Mesh (Ideally Id remove)
         gmsh.open(str(brep_path))
         gmsh.merge(str(mesh_path))
         gmsh.model.geo.synchronize()
         gmsh.model.occ.synchronize()
+        
         logger.info(f"Loaded mesh from: {mesh_path}")
-        
         datapack = joblib.load(str(data_path))
-        
-        self.data = datapack['simdata']
-        self.activate(0)
+        self.state.load_dataset(datapack)
+        self.state.activate(0)
         
         logger.info(f"Loaded simulation data from: {data_path}")
     
@@ -478,7 +474,7 @@ class Simulation:
             gmsh.model.occ.synchronize()
             gmsh.fltk.run()
             return
-        for geo in _GEOMANAGER.all_geometries():
+        for geo in self.state.current_geo_state:
             self.display.add_object(geo, mesh=plot_mesh, opacity=opacity, volume_mesh=volume_mesh, label=labels)
         if selections:
             [self.display.add_object(sel, color='red', opacity=0.6, label=labels) for sel in selections]
@@ -514,17 +510,13 @@ class Simulation:
         The geometries may be provided (legacy behavior) but are automatically managed in the background.
         
         """
-        geometries_parsed: Any = None
         logger.trace('Committing final geometry.')
-        if not geometries:
-            geometries_parsed = _GEOMANAGER.all_geometries()
-        else:
-            geometries_parsed = unpack_lists(geometries + tuple([item for item in self.data.sim.default.values() if isinstance(item, GeoObject)]))
-        logger.trace(f'Parsed geometries = {geometries_parsed}')
+        self.state.store_geometry_data()
         
-        self._save_geometries()
+        logger.trace(f'Parsed geometries = {self.state.geos}')
         
-        self.mesher.submit_objects(geometries_parsed)
+        self.mesher.submit_objects(self.state.geos)
+        
         self._defined_geometries = True
         self.display._facetags = [dt[1] for dt in gmsh.model.get_entities(2)]
     
@@ -534,20 +526,7 @@ class Simulation:
         Returns:
             list[GeoObject]: A list of all GeoObjects
         """
-        return _GEOMANAGER.all_geometries()  
-    
-    def activate(self, _indx: int | None = None, **variables) -> Simulation:
-        """Searches for the permutaions of parameter sweep variables and sets the current geometry to the provided set."""
-        if _indx is not None:
-            dataset = self.data.sim.index(_indx)
-        else:
-            dataset = self.data.sim.find(**variables)
-        
-        variables = ', '.join([f'{key}={value}' for key,value in dataset.vars.items()])
-        logger.info(f'Activated entry with variables: {variables}')
-        _GEOMANAGER.set_geometries(dataset['geos'])
-        self._set_mesh(dataset['mesh'])
-        return self
+        return self.state.current_geo_state
         
     def generate_mesh(self, regenerate: bool = False) -> None:
         """Generate the mesh. 
@@ -570,7 +549,7 @@ class Simulation:
             if self._cell is not None:
                 self.mesher.set_periodic_cell(self._cell)
             
-            self.mw._initialize_bcs(_GEOMANAGER.get_surfaces())
+            self.mw._initialize_bcs(self.state.manager.get_surfaces())
 
             # Check if frequencies are defined: TODO: Replace with a more generic check
             if self.mw.frequencies is None:
@@ -579,8 +558,18 @@ class Simulation:
         gmsh.model.occ.synchronize()
 
         # Set the mesh size
-        self.mesher._configure_mesh_size(self.mw.get_discretizer(), self.mw.resolution)
+        self.mesher._configure_mesh_size(self.mw.get_discretizer(), self.mw.resolution) # This makes no sense to do this here
             
+        # Validity check
+        x1, y1, z1, x2, y2, z2 = gmsh.model.getBoundingBox(-1, -1)
+        bb_volume = (x2-x1)*(y2-y1)*(z2-z1)
+        wl = 299792458/self.mw.frequencies[-1]
+        Nelem = int(5 * bb_volume / (wl**3))
+        if Nelem > 100_000 and DEFAULT_SETTINGS.size_check:
+            DEBUG_COLLECTOR.add_report(f'An estimated {Nelem} tetrahedra are required for the bounding box of the geometry. This may imply a simulation domain that is very large.' + 
+                                       'To disable this message. Set the .size_check parameter in model.settings to False.')
+            
+            raise SimulationError('Simulation requires too many elements.')
         logger.trace(' (2) Calling GMSH mesher')
         try:
             gmsh.logger.start()
@@ -598,7 +587,6 @@ class Simulation:
         self.mesh._pre_update(self.mesher._get_periodic_bcs())
         self.mesh.exterior_face_tags = self.mesher.domain_boundary_face_tags
         gmsh.model.occ.synchronize()
-        self._set_mesh(self.mesh)
         logger.trace(' (3) Mesh routine complete')
         
     def parameter_sweep(self, clear_mesh: bool = True, **parameters: np.ndarray) -> Generator[tuple[float,...], None, None]:
@@ -636,14 +624,13 @@ class Simulation:
             if clear_mesh and i_iter > 0:
                 logger.info('Cleaning up mesh.')
                 gmsh.clear()
-                mesh = Mesh3D(self.mesher)
-                _GEOMANAGER.reset(self.modelname)
-                self._set_mesh(mesh)
+                self.state.reset_geostate(self.modelname)
                 self.mw.reset()
+                
             
             params = {key: dim[i_iter] for key,dim in zip(paramlist, dims_flat)}
-            self.mw._params = params
-            self.data.sim.new(**params)
+            
+            self.state.set_parameters(params)
             
             logger.info(f'Iterating: {params}')
             if len(dims_flat)==1:
@@ -651,11 +638,12 @@ class Simulation:
             else:
                 yield (dim[i_iter] for dim in dims_flat) # type: ignore
             
+            
             if not clear_mesh:
-                self._save_geometries()
+                self.state.store_geometry_data()
         
         if not clear_mesh:
-                self._save_geometries()
+            self.state.store_geometry_data()
         
         self.mw.cache_matrices = True
         
@@ -698,14 +686,20 @@ class Simulation:
         
 class SimulationBeta(Simulation):
     
+    
+    def __post_init__(self):
+        
+        self.mesher.set_algorithm(Algorithm3D.HXT)
+        logger.debug('Setting mesh algorithm to HXT')
+        
+        
     def _reset_mesh(self):
         #gmsh.clear()
         gmsh.model.mesh.clear()
-        mesh = Mesh3D(self.mesher)
         
         self.mw.reset(_reset_bc = False)
-        self._set_mesh(mesh)
-    
+        self.state.reset_mesh()
+        
     def adaptive_mesh_refinement(self, 
                                  max_steps: int = 6,
                                  min_refined_passes: int = 1,
@@ -743,6 +737,7 @@ class SimulationBeta(Simulation):
         """
         from .physics.microwave.adaptive_mesh import select_refinement_indices, reduce_point_set, compute_convergence
         
+        
         max_freq = np.max(self.mw.frequencies)
         
         if frequency is not None:
@@ -755,14 +750,11 @@ class SimulationBeta(Simulation):
         
         passed = 0
         
-        self.mw._stash_data()
+        self.state.stash()
         
         for step in range(1,max_steps+1):
-             
-            amr_params = dict(iter_step=step)
             
-            self.mw._params = amr_params
-            self.data.sim.new(**amr_params)
+            self.data.sim.new(iter_step=step)
             
             data = self.mw._run_adaptive_mesh(step, max_freq)
             
@@ -830,13 +822,14 @@ class SimulationBeta(Simulation):
 
                 last_n_tets = self.mesh.n_tets
                 break
+            
             if show_mesh:
-                self.view(plot_mesh=True, volume_mesh=False)
+                self.view(plot_mesh=True, volume_mesh=True)
         
         if passed < min_refined_passes:
             logger.warning('Adaptive mesh refinement did not converge!')
         
-        
-        return self.mw._reload_data()
+        old = self.state.reload()
+        return old
     
     

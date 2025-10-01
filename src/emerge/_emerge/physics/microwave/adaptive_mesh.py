@@ -95,6 +95,18 @@ def select_refinement_indices(errors: np.ndarray, refine: float) -> np.ndarray:
 
 @njit(f8[:](i8, f8[:,:], f8, f8, f8[:]), cache=True, nogil=True, parallel=False)
 def compute_size(id: int, coords: np.ndarray, q: float, scaler: float, dss: np.ndarray) -> float:
+    """Optimized function to compute the size impressed by size constraint points on each other size constraint point.
+
+    Args:
+        id (int): _description_
+        coords (np.ndarray): _description_
+        q (float): _description_
+        scaler (float): _description_
+        dss (np.ndarray): _description_
+
+    Returns:
+        float: _description_
+    """
     N = dss.shape[0]
     sizes = np.zeros((N,), dtype=np.float64)-1.0
     x, y, z = coords[:,id]

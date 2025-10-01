@@ -131,8 +131,8 @@ def generate_ndim(
 
 class DataEntry:
     
-    def __init__(self, vars: dict[str, float]):
-        self.vars: dict[str, float] = vars
+    def __init__(self, variables: dict[str, float]):
+        self.vars: dict[str, float] = variables
         self.data: dict[str, Any] = dict()
     
     def print(self) -> None:
@@ -172,25 +172,23 @@ class DataContainer:
     """The DataContainer class is a generalized class to store data for a set of parameter sweeps"""
     def __init__(self):
         self.entries: list[DataEntry] = []
-        self.stock: DataEntry = DataEntry({})
         
 
     def print(self) -> None:
         """ Print an overview of all data in the DataContainer"""
-        self.stock.print()
         for entry in self.entries:
             entry.print()
 
-    def new(self, **vars: float) -> DataEntry:
+    def new(self, **variables: float) -> DataEntry:
         """Create a new entry in the DataContainer for the given value setting"""
-        entry = DataEntry(vars)
+        entry = DataEntry(variables)
         self.entries.append(entry)
         return entry
     
     def iterate(self) -> Generator[tuple[dict[str, float], dict[str, Any]], None, None]:
         for entry in self.entries:
             yield entry.vars, entry.data
-
+    
     @property
     def first(self) -> DataEntry:
         """Returns the first added entry"""
@@ -200,14 +198,6 @@ class DataContainer:
     def last(self) -> DataEntry:
         """Returns the last added entry"""
         return self.entries[-1]
-    
-    @property
-    def default(self) -> DataEntry:
-        """Returns the default DataEntry which is either the last from the parameter sweep or the general one in case of no parameter sweep."""
-        if not self.entries:
-            return self.stock
-        else:
-            return self.last
     
     def index(self, index: int) -> DataEntry:
         """Returns the last added entry"""
@@ -226,11 +216,11 @@ class DataContainer:
     
     def __getitem__(self, key: str) -> DataEntry:
         """Returns the requested item from the default DataEntry"""
-        return self.default[key]
+        return self.last[key]
         
     def __setitem__(self, key: str, value: Any) -> None:
         """Writes a value to the requested default DataEntry"""
-        self.default[key] = value
+        self.last[key] = value
     
 
 class BaseDataset(Generic[T,M]):
@@ -298,12 +288,10 @@ class BaseDataset(Generic[T,M]):
         Returns:
             T: The physics dataset
         """
-        index = next(
-            i
-            for i, var_map in enumerate(self._variables)
-            if all(var_map.get(k) == v for k, v in variables.items())
-        )
-        return self.get_entry(index)
+        for i, var_map in enumerate(self._variables):
+            if all(var_map.get(k) == v for k,v in variables.items()):
+                return self.get_entry(i)
+        
     
     def filter(self, **variables: float) -> list[T]:
         """Returns a list of all physics datasets that are valid for the given variable assignment

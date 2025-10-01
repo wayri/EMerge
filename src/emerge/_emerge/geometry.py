@@ -88,15 +88,12 @@ class _GeometryManager:
     def sign_in(self, modelname: str) -> None:
         # if modelname not in self.geometry_list:
         #     self.geometry_list[modelname] = []
-        if modelname is self.geometry_list:
-            logger.warning(f'{modelname} already exist, Geometries will be reset.')
         self.geometry_list[modelname] = dict()
         self.geometry_names[modelname] = set()
         self.active = modelname
 
     def reset(self, modelname: str) -> None:
-        self.geometry_list[modelname] = dict()
-        self.geometry_names[modelname] = set()
+        self.sign_in(modelname)
     
     def lowest_priority(self) -> int:
         return min([geo._priority for geo in self.all_geometries()])
@@ -257,7 +254,7 @@ class GeoObject:
         self._embeddings: list[GeoObject] = []
         self._face_pointers: dict[str, _FacePointer] = dict()
         self._tools: dict[int, dict[str, _FacePointer]] = dict()
-        
+        self._hidden: bool = False
         self._key = _GENERATOR.new()
         self._aux_data: dict[str, Any] = dict()
         self._priority: int = 10
@@ -617,7 +614,25 @@ class GeoObject:
         for name in names:
             tags.extend(self._face_tags(name, tool))
         return FaceSelection(tags)
-        
+    
+    def hide(self) -> GeoObject:
+        """Hides the object from views
+
+        Returns:
+            GeoObject: _description_
+        """
+        self._hidden = True
+        return self
+    
+    def unhide(self) -> GeoObject:
+        """Unhides the object from views
+
+        Returns:
+            GeoObject: _description_
+        """
+        self._hidden = False
+        return self
+    
     @property
     def dimtags(self) -> list[tuple[int, int]]:
         return [(self.dim, tag) for tag in self.tags]

@@ -37,7 +37,7 @@ Dtot = 750              # total clearance (mil)
 extra = 100             # extra margin (mil)
 
 # --- Simulation setup ----------------------------------------------------
-model = em.SimulationBeta('CoupledLineFilter')
+model = em.Simulation('CoupledLineFilter')
 model.check_version("1.0.7") # Checks version compatibility.
 # --- Material and layouter -----------------------------------------------
 mat = em.Material(er=3.55, color="#488343", opacity=0.4)
@@ -98,19 +98,20 @@ model.mw.set_frequency_range(5.2e9, 6.2e9, 31)  # 5.2–6.2 GHz, 31 points
 model.commit_geometry()
 
 # --- Mesh refinement -----------------------------------------------------
-model.mesher.set_boundary_size(stripline, 0.5 * mm, 1.2)
+model.mesher.set_boundary_size(stripline, 0.5 * mm, growth_rate=10)
 model.mesher.set_face_size(p1, 0.5*mm)
 model.mesher.set_face_size(p2, 0.5*mm)
 
 # --- Mesh generation and view --------------------------------------------
 model.generate_mesh()                    # build mesh
-model.view()                             # visualize with Gmsh viewer
+model.view(plot_mesh=True)                             # visualize with Gmsh viewer
 em.geo.PCB
 # --- Boundary conditions ------------------------------------------------
-port1 = model.mw.bc.ModalPort(p1, 1, TEM=True)
-port2 = model.mw.bc.ModalPort(p2, 2, TEM=True)
+port1 = model.mw.bc.ModalPort(p1, 1, modetype='TEM')
+port2 = model.mw.bc.ModalPort(p2, 2, modetype='TEM')
 
 # --- Run frequency-domain solver ----------------------------------------
+
 data = model.mw.run_sweep(parallel=True, n_workers=4, frequency_groups=8)
 
 # --- Extract and plot S-parameters ---------------------------------------

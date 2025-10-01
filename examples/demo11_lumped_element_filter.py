@@ -93,13 +93,12 @@ m.view()
 
 # --- Boundary conditions -----------------------------------------------
 # Define modal (TEM) ports at input and output
-p1 = m.mw.bc.ModalPort(mp1, 1, TEM=True)
-p2 = m.mw.bc.ModalPort(mp2, 2, TEM=True)
+p1 = m.mw.bc.ModalPort(mp1, 1, modetype='TEM')
+p2 = m.mw.bc.ModalPort(mp2, 2, modetype='TEM')
 # Add lumped element BCs for each element
 for le in LEs:
     m.mw.bc.LumpedElement(le)
 
-m._beta_adaptive_mesh_refinement(frequency=0.15e9)
 # --- Run frequency-domain simulation ------------------------------------
 data = m.mw.run_sweep(parallel=True, n_workers=4, frequency_groups=8)
 

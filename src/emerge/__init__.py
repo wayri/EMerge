@@ -16,13 +16,23 @@ along with this program; if not, see
 <https://www.gnu.org/licenses/>.
 
 """
-import os
+############################################################
+#                    WARNING SUPPRESSION                   #
+############################################################
 
-__version__ = "1.0.7"
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message="builtin type swigvarlink.*"
+)
 
 ############################################################
 #               HANDLE ENVIRONMENT VARIABLES              #
 ############################################################
+import os
+
+__version__ = "1.0.7"
 
 NTHREADS = "1"
 os.environ["EMERGE_STD_LOGLEVEL"] = os.getenv("EMERGE_STD_LOGLEVEL", default="INFO")
@@ -35,6 +45,7 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = NTHREADS
 os.environ["NUMEXPR_NUM_THREADS"] = NTHREADS
 os.environ["NUMBA_NUM_THREADS"] = os.getenv("NUMBA_NUM_THREADS", default="4")
 os.environ.setdefault("NUMBA_THREADING_LAYER", "workqueue")
+
 
 ############################################################
 #                      IMPORT MODULES                     #

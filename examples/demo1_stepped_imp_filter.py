@@ -27,7 +27,7 @@ pcbmat = em.Material(er=er, color="#217627", opacity=0.2)
 
 # We start by creating our simulation object.
 
-m = em.SimulationBeta('SteppedImpedanceFilter')
+m = em.Simulation('SteppedImpedanceFilter', loglevel='DEBUG')
 m.check_version("1.0.7") # Checks version compatibility.
 # To accomodate PCB routing we make use of the PCBLayouter class. To use it we need to 
 # supply it with a thickness, the desired air-box height, the units at which we supply
@@ -78,36 +78,18 @@ m.mw.set_frequency_range(0.2e9, 8e9, 41)
 # With the set_boundary_size(method) we can define a meshing resolution for the edges of boundaries.
 # This is adviced for small stripline structures.
 # The growth_rate setting allows us to change how fast the mesh size will recover to the original size.
-m.mesher.set_boundary_size(polies, 5*mm, growth_rate=1.2)
+m.mesher.set_boundary_size(polies, 1.2*mm)
 m.mesher.set_face_size(p1, 2*mm)
 m.mesher.set_face_size(p2, 2*mm)
 
 # Finally we generate our mesh and view it
 m.generate_mesh()
-m.view()
+m.view(plot_mesh=True)
 # We can now define the modal ports for the in and outputs and set the conductor to PEC.
-port1 = m.mw.bc.ModalPort(p1, 1, TEM=True)
-port2 = m.mw.bc.ModalPort(p2, 2, TEM=True)
+port1 = m.mw.bc.ModalPort(p1, 1, modetype='TEM')
+port2 = m.mw.bc.ModalPort(p2, 2, modetype='TEM')
 
-## OPTIONAL
-# If we want to view the port mode we have to first know it. The modes are computed using a modal analysis.
-# Since the latest version of EMerge. Modal analysis is executed automatically. Here we compute them manually
-# as the mode is only calculated during the frequency domain solution.
-if False:
-    # Make sure to set the TEM property to True so that
-    # EMerge knows to handle the port mode as a TEM boundary. This also includes the automatic
-    # determination of a voltage integration line used for computing the port impedance.
-    m.mw.modal_analysis(port1, 1, TEM=True)
-    m.mw.modal_analysis(port2, 1, TEM=True)
 
-    # Finally we import the display class to view the resultant modes
-    m.display.add_object(pcb, opacity=0.1)
-    m.display.add_object(polies)
-    m.display.add_portmode(port1, 21)
-    m.display.add_portmode(port2, 21)
-    m.display.show()
-
-m.adaptive_mesh_refinement(show_mesh=True, frequency=1e9)
 # Finally we execute the frequency domain sweep and compute the Scattering Parameters.
 sol = m.mw.run_sweep(parallel=True, n_workers=4, frequency_groups=8)
 
@@ -140,7 +122,10 @@ smith(S11, labels='S11', f=f)
 
 plot_sp(f, [S11, S21], labels=['S11','S21'], dblim=[-40,6], logx=True)
 
+field = sol.field[0]
 m.display.add_object(pcb, opacity=0.1)
 m.display.add_object(polies, opacity=0.5)
-m.display.add_surf(*sol.field[0].cutplane(1*mm, z=-0.75*th*mil).scalar('Ez','real'), symmetrize=True)
+m.display.animate().add_surf(*field.cutplane(1*mm, z=-0.75*th*mil).scalar('Ez','complex'), symmetrize=True)
+m.display.add_portmode(port1, k0=field.k0)
+m.display.add_portmode(port2, k0=field.k0)
 m.display.show()

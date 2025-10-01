@@ -15,19 +15,19 @@
 # along with this program; if not, see
 # <https://www.gnu.org/licenses/>.
 from __future__ import annotations
-import time
 from ...mesh3d import Mesh3D
+from ...simstate import SimState
 from ...geometry import GeoObject
 from ...selection import FaceSelection, DomainSelection, EdgeSelection, Selection, encode_data
 from ...physics.microwave.microwave_bc import PortBC, ModalPort
+from ..display import BaseDisplay
+from .display_settings import PVDisplaySettings
+from .cmap_maker import make_colormap
+
+import time
 import numpy as np
 import pyvista as pv
 from typing import Iterable, Literal, Callable, Any
-from ..display import BaseDisplay
-from .display_settings import PVDisplaySettings
-from matplotlib.colors import ListedColormap
-from .cmap_maker import make_colormap
-
 from itertools import cycle
 ### Color scale
 
@@ -232,8 +232,8 @@ class _AnimObject:
 
 class PVDisplay(BaseDisplay):
 
-    def __init__(self, mesh: Mesh3D):
-        self._mesh: Mesh3D = mesh
+    def __init__(self, state: SimState):
+        self._state: SimState = state
         self.set: PVDisplaySettings = PVDisplaySettings()
         
         # Animation options
@@ -260,6 +260,9 @@ class PVDisplay(BaseDisplay):
         self._cbar_lim: tuple[float, float] | None = None
         self.camera_position = (1, -1, 1)     # +X, +Z, -Y
     
+    @property
+    def _mesh(self) -> Mesh3D:
+        return self._state.mesh
     
     def cbar(self, name: str, n_labels: int = 5, interactive: bool = False, clim: tuple[float, float] | None = None ) -> PVDisplay:
         self._cbar_args = dict(title=name, n_labels=n_labels, interactive=interactive)
@@ -313,14 +316,6 @@ class PVDisplay(BaseDisplay):
             self._plot.show()
         
         self._reset()
-    
-    def set_mesh(self, mesh: Mesh3D):
-        """Define the mesh to be used
-
-        Args:
-            mesh (Mesh3D): The mesh object
-        """
-        self._mesh = mesh
 
     def _reset(self):
         """ Resets key display parameters."""
@@ -456,6 +451,10 @@ class PVDisplay(BaseDisplay):
     ## OBLIGATORY METHODS
     def add_object(self, obj: GeoObject | Selection, mesh: bool = False, volume_mesh: bool = True, label: bool = False, *args, **kwargs):
         
+        if isinstance(obj, GeoObject):
+            if obj._hidden:
+                return
+            
         show_edges = False
         opacity = obj.opacity
         line_width = 0.5

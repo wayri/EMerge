@@ -17,7 +17,7 @@
 
 from loguru import logger
 import sys
-from typing import Literal
+from typing import Literal, Generator
 from pathlib import Path
 import os
 from collections import deque
@@ -132,4 +132,28 @@ class LogController:
         self.file_level = loglevel
         os.environ["EMERGE_FILE_LOGLEVEL"] = loglevel
 
+class DebugCollector:
+    """The DebugController is used by EMerge to collect heuristic
+    warnings for detections of things that might be causing problems but aren't
+    guaranteed to cause them. These logs will be printed at the end of a simulation
+    to ensure that users are aware of them if they abort simulations.
+    
+    """
+    def __init__(self):
+        self.reports: list[str] = []
+    
+    @property
+    def any_warnings(self) -> bool:
+        return len(self.reports)>0
+    
+    def add_report(self, message: str):
+        self.reports.append(message)
+        
+    def all_reports(self) -> Generator[tuple[int, str], None, None]:
+        
+        for i, message in enumerate(self.reports):
+            yield i+1, message
+
+
 LOG_CONTROLLER = LogController()
+DEBUG_COLLECTOR = DebugCollector()

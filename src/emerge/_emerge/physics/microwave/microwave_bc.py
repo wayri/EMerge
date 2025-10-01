@@ -29,6 +29,7 @@ from ...bc import BoundaryCondition, BoundaryConditionSet, Periodic
 from ...periodic import PeriodicCell, HexCell, RectCell
 from ...material import Material
 from ...const import Z0, C0, EPS0, MU0
+from ...logsettings import DEBUG_COLLECTOR
 
 ############################################################
 #                     UTILITY FUNCTIONS                    #
@@ -341,7 +342,6 @@ class PortMode:
     norm_factor: float = 1
     freq: float = 0
     neff: float = 1
-    TEM: bool = True
     Z0: float = 50.0
     polarity: float = 1.0
     modetype: Literal['TEM','TE','TM'] = 'TEM'
@@ -459,7 +459,7 @@ class ModalPort(PortBC):
                  port_number: int, 
                  cs: CoordinateSystem | None = None,
                  power: float = 1,
-                 TEM: bool = False,
+                 modetype: Literal['TE','TM','TEM'] | None = None,
                  mixed_materials: bool = False):
         """Generes a ModalPort boundary condition for a port that requires eigenmode solutions for the mode.
 
@@ -476,7 +476,7 @@ class ModalPort(PortBC):
             port_number (int): The port number as an integer
             cs (CoordinateSystem, optional): The local coordinate system of the port face. Defaults to None.
             power (float, optional): The radiated power. Defaults to 1.
-            TEM (bool, optional): Wether the mode should be considered as a TEM mode. Defaults to False
+            modetype (str[TE, TM, TEM], optional): Wether the mode should be considered as a TEM mode. Defaults to False
             mixed_materials (bool, optional): Wether the port consists of multiple different dielectrics. This requires
                 A recalculation of the port mode at every frequency
         """
@@ -490,7 +490,7 @@ class ModalPort(PortBC):
         self.selected_mode: int = 0
         self.modes: dict[float, list[PortMode]] = defaultdict(list)
 
-        self.TEM: bool = TEM
+        self.forced_modetype: Literal['TE','TM','TEM'] | None = modetype
         self.mixed_materials: bool = mixed_materials
         self.initialized: bool = False
         self._first_k0: float | None = None
@@ -506,6 +506,18 @@ class ModalPort(PortBC):
             raise ValueError('No Coordinate System could be derived.')
         self._er: np.ndarray | None = None
         self._ur: np.ndarray | None = None
+        
+        self.vintline: list[Line] = []
+
+    def set_integration_line(self, c1: tuple[float, float, float], c2: tuple[float, float, float], N: int = 21) -> None:
+        """Define the integration line start and end point
+
+        Args:
+            c1 (tuple[float, float, float]): The start coordinate
+            c2 (tuple[float, float, float]): The end coordinate
+            N (int, optional): The number of integration points. Defaults to 21.
+        """
+        self.vintline.append(Line.from_points(c1, c2, N))
     
     def reset(self) -> None:
         self.modes: dict[float, list[PortMode]] = defaultdict(list)
@@ -529,6 +541,11 @@ class ModalPort(PortBC):
             *axes (tuple, np.ndarray, Axis): The alignment vectors.
         """ 
         self.alignment_vectors = [_parse_axis(ax) for ax in axes]
+    
+    def _get_alignment_vector(self, index: int) -> np.ndarray | None:
+        if len(self.alignment_vectors) > index:
+            return self.alignment_vectors[index].np
+        return None
     
     def set_terminals(self, positive: Selection | GeoObject | None = None,
                       negative: Selection | GeoObject | None = None,
@@ -622,7 +639,7 @@ class ModalPort(PortBC):
                  beta: float,
                  k0: float,
                  residual: float,
-                 TEM: bool,
+                 number: int,
                  freq: float) -> PortMode | None:
         """Add a mode function to the ModalPort
 
@@ -633,16 +650,17 @@ class ModalPort(PortBC):
             beta (float): The out-of-plane propagation constant 
             k0 (float): The free space phase constant
             residual (float): The solution residual
-            TEM (bool): Whether its a TEM mode
             freq (float): The frequency of the port mode
 
         Returns:
             PortMode: The port mode object.
         """
-        mode = PortMode(field, E_function, H_function, k0, beta, residual, TEM=TEM, freq=freq)
+        mode = PortMode(field, E_function, H_function, k0, beta, residual, freq=freq)
+        
         if mode.energy < 1e-4:
             logger.debug(f'Ignoring mode due to a low mode energy: {mode.energy}')
             return None
+        
         self.modes[k0].append(mode)
         self.initialized = True
 
@@ -665,7 +683,7 @@ class ModalPort(PortBC):
     
     def get_beta(self, k0: float) -> float:
         mode = self.get_mode(k0)
-        if mode.TEM:
+        if self.forced_modetype=='TEM':
             beta = mode.beta/mode.k0 * k0
         else:
             freq = k0*299792458/(2*np.pi)
@@ -880,6 +898,11 @@ class LumpedPort(PortBC):
         self.vintline: list[Line] = []
         self.v_integration = True
 
+        # Sanity checks
+        if self.width > 0.5 or self.height > 0.5:
+            DEBUG_COLLECTOR.add_report(f'{self}: A lumped port width/height larger than 0.5m has been detected: width={self.width:.3f}m. Height={self.height:.3f}.m. Perhaps you forgot a unit like mm, um, or mil')
+
+        
     @property
     def surfZ(self) -> float:
         """The surface sheet impedance for the lumped port

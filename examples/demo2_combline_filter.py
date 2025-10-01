@@ -42,7 +42,7 @@ rin = 12.5*mil
 lfeed = 100*mil
 
 # A usual we start our simulation file
-model = em.Simulation('ComblineFilter')
+model = em.Simulation('ComblineFilter', loglevel='DEBUG', write_log=False)
 model.check_version("1.0.7") # Checks version compatibility.
 
 # The filter consists of quarter lamba cylindrical pins inside an airbox.
@@ -84,15 +84,15 @@ model.mw.set_frequency_range(6e9, 8e9, 21)
 model.mw.set_resolution(0.05)
 # To improve simulation quality we refine the faces at the top of the cylinders.
 for stub in stubs:
-    model.mesher.set_face_size(box.face('back', tool=stub), 0.0005)
+    model.mesher.set_boundary_size(box.face('back', tool=stub), 0.25*mm)
 
 # Finally we may create our mesh.
 model.generate_mesh()
 model.view(plot_mesh=True)
 # We define our modal ports, assign the boundary condition and execute a modal analysis to solve for the
 # coaxial field mode.
-port1 = model.mw.bc.ModalPort(model.select.face.near(-lfeed, 0, h), 1, TEM=True)
-port2 = model.mw.bc.ModalPort(model.select.face.near(Lbox+lfeed, 0, h), 2, TEM=True)
+port1 = model.mw.bc.ModalPort(model.select.face.near(-lfeed, 0, h), 1, modetype='TEM')
+port2 = model.mw.bc.ModalPort(model.select.face.near(Lbox+lfeed, 0, h), 2, modetype='TEM')
 
 # At last we can compute the frequency domain study
 data = model.mw.run_sweep(parallel=True)

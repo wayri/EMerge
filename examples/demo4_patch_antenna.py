@@ -32,7 +32,7 @@ f1 = 1.55e9             # start frequency
 f2 = 1.60e9             # stop frequency
 
 # --- Create simulation object -------------------------------------------
-model = em.Simulation('PatchAntenna')
+model = em.Simulation('PatchAntenna', loglevel='DEBUG')
 
 model.check_version("1.0.7") # Checks version compatibility.
 
@@ -88,13 +88,14 @@ model.commit_geometry()
 
 # --- Mesh refinement settings --------------------------------------------
 # Finer boundary mesh on patch edges for accuracy
-model.mesher.set_boundary_size(rpatch, 4 * mm, 1.2)
+model.mesher.set_boundary_size(rpatch, 2 * mm)
 # Refined mesh on port face for excitation accuracy
 model.mesher.set_face_size(port, 0.5 * mm)
 
 # --- Generate mesh and preview ------------------------------------------
+model.mesher.set_algorithm(em.Algorithm3D.HXT)
 model.generate_mesh()                      # build the finite-element mesh
-model.view(selections=[port])              # show the mesh around the port
+model.view(selections=[port], plot_mesh=True)              # show the mesh around the port
 
 # --- Boundary conditions ------------------------------------------------
 # Define lumped port with specified orientation and impedance
@@ -113,7 +114,6 @@ pec_selection = em.select(rpatch,ground)
 # Assigning the boundary conditions
 abc = model.mw.bc.AbsorbingBoundary(boundary_selection)
 # --- Run frequency-domain solver ----------------------------------------
-
 data = model.mw.run_sweep()
 
 # --- Post-process S-parameters ------------------------------------------
