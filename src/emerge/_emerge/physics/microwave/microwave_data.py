@@ -792,6 +792,7 @@ class MWField:
         
     def boundary(self,
                  selection: FaceSelection) -> EHField:
+        """ Interpolate the field on the node coordinates of the surface."""
         nodes = self.mesh.nodes
         x = nodes[0,:]
         y = nodes[1,:]

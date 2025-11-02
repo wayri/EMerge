@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, see
 # <https://www.gnu.org/licenses/>.
+
 from __future__ import annotations
 from ...mesh3d import Mesh3D
 from ...simstate import SimState
@@ -43,21 +44,43 @@ cmap_names = Literal['bgy','bgyw','kbc','blues','bmw','bmy','kgy','gray','dimgra
                      'bkr','bky','coolwarm','gwv','bjy','bwy','cwr','colorwheel','isolum','rainbow','fire',
                      'cet_fire','gouldian','kbgyw','cwr','CET_CBL1','CET_CBL3','CET_D1A']
 
-EMERGE_AMP =  make_colormap(["#1F0061","#35188e","#1531ab", "#ff007b", "#ff7c51"], (0.0, 0.2, 0.4, 0.7, 0.9))
+EMERGE_AMP =  make_colormap(["#1F0061","#4218c0","#2849db", "#ff007b", "#ff7c51"], (0.0, 0.15, 0.3, 0.7, 0.9))
 EMERGE_WAVE = make_colormap(["#4ab9ff","#0510B2B8","#3A37466E","#CC0954B9","#ff9036"], (0.0, 0.3, 0.5, 0.7, 1.0))
 
-def _gen_c_cycle():
-    colors = [
+
+## Cycler class
+
+class _Cycler:
+    """Like itertools.cycle(iterable) but with reset(). Materializes the iterable."""
+    def __init__(self, iterable):
+        self._data = list(iterable)
+        self._n = len(self._data)
+        self._i = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._n == 0:
+            raise StopIteration
+        item = self._data[self._i]
+        self._i += 1
+        if self._i == self._n:
+            self._i = 0
+        return item
+
+    def reset(self):
+        self._i = 0
+
+
+C_CYCLE = _Cycler([
         "#0000aa",
         "#aa0000",
         "#009900",
         "#990099",
         "#994400",
         "#005588"
-    ]
-    return cycle(colors)
-
-C_CYCLE = _gen_c_cycle()
+    ])
 
 class _RunState:
     
@@ -336,7 +359,8 @@ class PVDisplay(BaseDisplay):
         self._stop = False
         self._objs = []
         self._animate_next = False
-        C_CYCLE = _gen_c_cycle()
+        self._reset_cbar()
+        C_CYCLE.reset()
 
     def _close_callback(self, arg):
         """The private callback function that stops the animation.

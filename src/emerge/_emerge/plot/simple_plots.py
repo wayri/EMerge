@@ -495,11 +495,11 @@ def plot_sp(f: np.ndarray | list[np.ndarray], S: list[np.ndarray] | np.ndarray,
         if isinstance(levelindicator, (int, float)) and levelindicator is not None:
             lvl = levelindicator
             fcross = hintersections(f, SdB, lvl)
-            for fs in fcross:
+            for freqs in fcross:
                 ax_mag.annotate(
-                    f"{str(fs)[:4]}{xunit}",
-                    xy=(fs, lvl),
-                    xytext=(fs + 0.08 * (max(f) - min(f)) / unitdivider[xunit], lvl),
+                    f"{str(freqs)[:4]}{xunit}",
+                    xy=(freqs, lvl),
+                    xytext=(freqs + 0.08 * (max(f) - min(f)) / unitdivider[xunit], lvl),
                     arrowprops=dict(facecolor="black", width=1, headwidth=5),
                 )
     if fill_areas is not None:
@@ -541,6 +541,118 @@ def plot_sp(f: np.ndarray | list[np.ndarray], S: list[np.ndarray] | np.ndarray,
 
     return fig, ax_mag, ax_phase
 
+def plot_vswr(f: np.ndarray | list[np.ndarray], S: list[np.ndarray] | np.ndarray, 
+            swrlim=[1, 5], 
+            xunit="GHz", 
+            levelindicator: int | float | None = None, 
+            fill_areas: list[tuple] | None = None, 
+            spec_area: list[tuple[float,...]] | None = None,
+            labels: list[str] | None = None,
+            linestyles: list[str] | None = None,
+            colorcycle: list[int] | None = None,
+            filename: str | None = None,
+            show_plot: bool = True,
+            figdata: tuple | None = None) -> tuple[plt.Figure, plt.Axes, plt.Axes]:
+    """Plot S-parameters in VSWR
+    
+    One may provide:
+     - A single frequency with a single S-parameter
+     - A single frequency with a list of S-parameters
+     - A list of frequencies with a list of S-parameters
+
+    Args:
+        f (np.ndarray | list[np.ndarray]): Frequency vector or list of frequencies
+        S (list[np.ndarray] | np.ndarray): S-parameters to plot (list or single array)
+        swrlim (list, optional): VSWR y-axis limit. Defaults to [1, 5].
+        xunit (str, optional): Frequency unit. Defaults to "GHz".
+        levelindicator (int | float, optional): Level at which annotation arrows will be added. Defaults to None.
+        fill_areas (list[tuple], optional): Regions to fill (fmin, fmax). Defaults to None.
+        spec_area (list[tuple[float]], optional): _description_. Defaults to None.
+        labels (list[str], optional): A lists of labels to use. Defaults to None.
+        linestyles (list[str], optional): The linestyle to use (list or single string). Defaults to None.
+        colorcycle (list[int], optional): A list of colors to use. Defaults to None.
+        filename (str, optional): The filename (will automatically save). Defaults to None.
+        show_plot (bool, optional): If or not to show the resulting plot. Defaults to True.
+        
+    """    
+    if not isinstance(S, list):
+        Ss = [S]
+    else:
+        Ss = S
+        
+    if not isinstance(f, list):
+        fs = [f for _ in Ss]
+    else:
+        fs = f
+    
+    if linestyles is None:
+        linestyles = ['-' for _ in S]
+
+    if colorcycle is None:
+        colorcycle = [i for i, S in enumerate(S)]
+
+    unitdivider: dict[str, float] = {"MHz": 1e6, "GHz": 1e9, "kHz": 1e3}
+    
+    fs = [f / unitdivider[xunit] for f in fs]
+
+    if figdata is None:
+        # Create two subplots: one for magnitude and one for phase
+        fig, ax_swr = plt.subplots()
+        fig.subplots_adjust(hspace=0.3)
+    else:
+        fig, ax_swr = figdata
+    maxy = 5
+
+
+    for f, s, ls, cid in zip(fs, Ss, linestyles, colorcycle):
+        # Calculate and plot magnitude in dB
+        SWR = np.divide((1 + abs(s)), (1 - abs(s)))
+        ax_swr.plot(f, SWR, label="VSWR", linestyle=ls, color=EMERGE_COLORS[cid % len(EMERGE_COLORS)])
+        if np.max(SWR) > maxy:
+            maxy = np.max(SWR)
+
+        # Annotate level indicators if specified
+        if isinstance(levelindicator, (int, float)) and levelindicator is not None:
+            lvl = levelindicator
+            fcross = hintersections(f, SWR, lvl)
+            for fa in fcross:
+                ax_swr.annotate(
+                    f"{str(fa)[:4]}{xunit}",
+                    xy=(fa, lvl),
+                    xytext=(fa + 0.08 * (max(f) - min(f)) / unitdivider[xunit], lvl),
+                    arrowprops=dict(facecolor="black", width=1, headwidth=5),
+                )
+    
+    
+    if fill_areas is not None:
+        for fmin, fmax in fill_areas:
+            f1 = fmin / unitdivider[xunit]
+            f2 = fmax / unitdivider[xunit]
+            ax_swr.fill_between([f1, f2], swrlim[0], swrlim[1], color='grey', alpha= 0.2)
+
+    if spec_area is not None:
+        for fmin, fmax, vmin, vmax in spec_area:
+            f1 = fmin / unitdivider[xunit]
+            f2 = fmax / unitdivider[xunit]
+            ax_swr.fill_between([f1, f2], vmin,vmax, color='red', alpha=0.2)
+
+    # Configure magnitude plot (ax_swr)
+    fmin = min([min(f) for f in fs])
+    fmax = max([max(f) for f in fs])
+    ax_swr.set_ylabel("VSWR")
+    ax_swr.set_xlabel(f"Frequency ({xunit})")
+    ax_swr.axis([fmin, fmax, swrlim[0], max(maxy*1.1,swrlim[1])]) # type: ignore
+    ax_swr.xaxis.set_minor_locator(tck.AutoMinorLocator(2))
+    ax_swr.yaxis.set_minor_locator(tck.AutoMinorLocator(2))
+
+    if labels is not None:
+        ax_swr.legend(labels)
+    if show_plot:
+        plt.show()
+    if filename is not None:
+        fig.savefig(filename)
+
+    return fig, ax_swr
     
 def plot_ff(
     theta: np.ndarray | list[np.ndarray],

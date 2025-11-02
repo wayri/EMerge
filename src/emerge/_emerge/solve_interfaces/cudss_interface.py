@@ -91,7 +91,7 @@ class CuDSSInterface:
         self._config = cudss.config_create()
         self._data = cudss.data_create(self._handle)
 
-        self.MTYPE = cudss.MatrixType.SYMMETRIC
+        self.MTYPE = cudss.MatrixType.GENERAL
         self.MVIEW = cudss.MatrixViewType.FULL
         self.RALG = cudss.AlgType.ALG_DEFAULT
         self.VTYPE = CudaDataType.CUDA_R_64F

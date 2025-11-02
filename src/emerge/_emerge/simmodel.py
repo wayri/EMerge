@@ -317,12 +317,14 @@ class Simulation:
     
     def check_version(self, target_version: str, *, log: bool = False) -> None:
         """
-        Ensure the script targets an EMerge version compatible with the current runtime.
+        Ensure the script targets an EMerge major.minor compatible with the current runtime.
+
+        Only major.minor is enforced. Patch differences are ignored.
 
         Parameters
         ----------
         target_version : str
-            The EMerge version this script was written for (e.g. "1.4.0").
+            The EMerge version this script was written for (e.g. "1.4.0" or "1.4").
         log : bool, optional
             If True and a `logger` is available, emit a single WARNING with the same
             message as the exception. Defaults to False.
@@ -330,40 +332,50 @@ class Simulation:
         Raises
         ------
         VersionError
-            If the script's target version differs from the running EMerge version.
+            If the script's target major.minor differs from the running EMerge major.minor.
         """
         try:
             from packaging.version import Version as _V
-            v_script = _V(target_version)
-            v_runtime = _V(__version__)
-            newer = v_script > v_runtime
-            older = v_script < v_runtime
+            def _mm(v: str):
+                pv = _V(v)
+                return (pv.major, pv.minor)
+            script_mm = _mm(target_version)
+            runtime_mm = _mm(__version__)
+            newer = script_mm > runtime_mm
+            older = script_mm < runtime_mm
         except Exception:
-            def _parse(v: str):
+            def _parse_mm(v: str):
+                parts = v.split(".")
                 try:
-                    return tuple(int(p) for p in v.split("."))
+                    major = int(parts[0])
+                    minor = int(parts[1]) if len(parts) > 1 else 0
+                    return (major, minor)
                 except Exception:
-                    # Last-resort: compare as strings to avoid crashing the check itself
-                    return tuple(v.split("."))
-            v_script = _parse(target_version)
-            v_runtime = _parse(__version__)
-            newer = v_script > v_runtime
-            older = v_script < v_runtime
+                    # Fallback: compare as strings to avoid crashing the check itself
+                    major = parts[0] if parts else "0"
+                    minor = parts[1] if len(parts) > 1 else "0"
+                    return (str(major), str(minor))
+            script_mm = _parse_mm(target_version)
+            runtime_mm = _parse_mm(__version__)
+            newer = script_mm > runtime_mm
+            older = script_mm < runtime_mm
 
         if not newer and not older:
-            return  # exact match
+            return  # major.minor match
 
         if newer:
             msg = (
-                f"Script targets EMerge {target_version}, but runtime is {__version__}. "
-                "The script may rely on features added after your installed version. "
+                f"Script targets EMerge {target_version} (major.minor {script_mm[0]}.{script_mm[1]}), "
+                f"but runtime is {__version__} (major.minor {runtime_mm[0]}.{runtime_mm[1]}). "
+                "The script may rely on features added after your installed major.minor. "
                 "Recommended: upgrade EMerge (`pip install --upgrade emerge`). "
                 "If you know the script is compatible, you may remove this check."
             )
         else:  # older
             msg = (
-                f"Script targets EMerge {target_version}, but runtime is {__version__}. "
-                "APIs may have changed since the targeted version. "
+                f"Script targets EMerge {target_version} (major.minor {script_mm[0]}.{script_mm[1]}), "
+                f"but runtime is {__version__} (major.minor {runtime_mm[0]}.{runtime_mm[1]}). "
+                "APIs may have changed since the targeted major.minor. "
                 "Recommended: update the script for the current EMerge, or run a matching older release. "
                 "If you know the script is compatible, you may remove this check."
             )
@@ -700,9 +712,7 @@ class SimulationBeta(Simulation):
         
         
     def _reset_mesh(self):
-        #gmsh.clear()
         gmsh.model.mesh.clear()
-        
         self.mw.reset(_reset_bc = False)
         self.state.reset_mesh()
         
@@ -716,6 +726,7 @@ class SimulationBeta(Simulation):
                                  growth_rate: float = 2,
                                  minimum_refinement_percentage: float = 20.0, 
                                  error_field_inclusion_percentage: float = 60.0,
+                                 minimum_steps: int = 1,
                                  frequency: float = None,
                                  show_mesh: bool = False) -> SimulationDataset:
         """ A beta-version of adaptive mesh refinement.
@@ -735,6 +746,7 @@ class SimulationBeta(Simulation):
             growth_rate (float, optional): The mesh size growth rate. Defaults to 3.0.
             minimum_refinement_percentage (float, optional): The minimum mesh size increase . Defaults to 15.0.
             error_field_inclusion_percentage (float, optional): A percentage of tet elements to be included for refinement. Defaults to 5.0.
+            minimum_steps (int, optional): The minimum number of adaptive steps to execute. Defaults to 1.
             frequency (float, optional): The refinement frequency. Defaults to None.
             show_mesh (bool, optional): If the intermediate meshes should be shown (freezes simulation). Defaults to False
 
@@ -742,7 +754,6 @@ class SimulationBeta(Simulation):
             SimulationDataset: _description_
         """
         from .physics.microwave.adaptive_mesh import select_refinement_indices, reduce_point_set, compute_convergence
-        from collections import defaultdict
         
         max_freq = np.max(self.mw.frequencies)
         
@@ -758,12 +769,14 @@ class SimulationBeta(Simulation):
         
         self.state.stash()
         
+        # Coefficients for the refinement ratio calculation.
         a0 = 0.26
         c0 = 0.75
         x0 = 12
         q0 = (1-a0)*2/np.pi
         b0 = np.tan((c0-a0)/q0)/x0
         q0 = (0.8-a0)*2/np.pi
+        
         
         for step in range(1,max_steps+1):
             
@@ -776,7 +789,7 @@ class SimulationBeta(Simulation):
             Smat_new = data.scalar[-1].Sp
             S_matrices.append(Smat_new)
             
-            if step > 1:
+            if step > minimum_steps:
                 S0 = S_matrices[-2]
                 S1 = S_matrices[-1]
                 conv_complex, conv_mag, conv_phase = compute_convergence(S0, S1)
@@ -787,7 +800,7 @@ class SimulationBeta(Simulation):
                 else:
                     passed = 0
             
-            if passed >= min_refined_passes:
+            if passed >= min_refined_passes and step > minimum_steps:
                 logger.info(f'Adaptive mesh refinement successfull with {self.mesh.n_tets} tetrahedra.')
                 break
             
@@ -800,7 +813,7 @@ class SimulationBeta(Simulation):
             np_percentage = npts/self.mesh.n_tets * 100
             
             refinement_ratio = (a0 + np.arctan(b0*np_percentage)*q0)
-            #calc_refinement_ratio(refinement_throttle, point_percentage)
+            
             logger.info(f'Adding {npts} refinement points with a ratio: {refinement_ratio}')
             
             # tet_nodes = defaultdict(lambda: 1000.)
@@ -832,15 +845,13 @@ class SimulationBeta(Simulation):
             self.mesher._amr_ratios = self.mesher._amr_ratios[new_ids]
             self.mesher._amr_new = self.mesher._amr_new[new_ids]
             
-            def clip(value: float):
-                return max(1.3, value)
-            
             logger.debug(f'Initial refinement ratio: {refinement_ratio}')
             
             over = False
             under = False
             throttle = 1.0
             
+            # Mesh refinement loop. Only escapes if the mesh refined a certain set percentage.
             while True:
                 
                 if over and under:

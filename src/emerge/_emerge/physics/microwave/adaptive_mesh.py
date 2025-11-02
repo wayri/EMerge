@@ -17,7 +17,7 @@
 
 from .microwave_data import MWField
 import numpy as np
-from ...mth.optimized import matmul, outward_normal, cross_c
+from ...mth.optimized import matmul, outward_normal
 from numba import njit, f8, c16, i8, types, prange # type: ignore, p
 from loguru import logger
 from ...const import C0, MU0, EPS0
@@ -783,32 +783,33 @@ def compute_error_single(nodes, tets, tris, edges, centers,
                          pec_tris,
                          k0,) -> np.ndarray:
 
-    is_pec = np.zeros((tris.shape[1],), dtype=np.bool)
-    is_pec[pec_tris] = True
+    tet_is_pec = np.zeros((tris.shape[1],), dtype=np.bool)
+    tet_is_pec[pec_tris] = True
 
     # CONSTANTS
-    ntet = tets.shape[1]
-    nedges = edges.shape[1]
-    W0 = k0*C0
+    N_TETS = tets.shape[1]
+    N_EDGES = edges.shape[1]
     N2D = DPTS_2D.shape[1]
-    W_VOL = DPTS_3D[0,:]
+    WEIGHTS_VOL = DPTS_3D[0,:]
+    
+    W0 = k0*C0
     Y0 = np.sqrt(1/MU0)
     
     # INIT POSTERIORI ERROR ESTIMATE QUANTITIES
-    alpha_t = np.zeros((ntet,), dtype=np.complex128)
-    max_elem_size = np.zeros((ntet,), dtype=np.float64)
+    alpha_t = np.zeros((N_TETS,), dtype=np.complex128)
+    max_elem_size = np.zeros((N_TETS,), dtype=np.float64)
     
-    Qf_face1 = np.zeros((4,N2D,ntet), dtype=np.complex128)
-    Qf_face2 = np.zeros((4,N2D,ntet), dtype=np.complex128)
-    Jf_face1 = np.zeros((4,3,N2D,ntet), dtype=np.complex128)
-    Jf_face2 = np.zeros((4,3,N2D,ntet), dtype=np.complex128)
+    Qf_face1 = np.zeros((4,N2D,N_TETS), dtype=np.complex128)
+    Qf_face2 = np.zeros((4,N2D,N_TETS), dtype=np.complex128)
+    Jf_face1 = np.zeros((4,3,N2D,N_TETS), dtype=np.complex128)
+    Jf_face2 = np.zeros((4,3,N2D,N_TETS), dtype=np.complex128)
     
-    areas_fr = np.zeros((4, N2D, ntet), dtype=np.float64)
-    Rf_fr = np.zeros((4, ntet), dtype=np.float64)
-    adj_tets_mat = -np.ones((4,ntet), dtype=np.int32)
+    areas_face_residual = np.zeros((4, N2D, N_TETS), dtype=np.float64)
+    Rf_face_residual = np.zeros((4, N_TETS), dtype=np.float64)
+    adj_tets_mat = -np.ones((4,N_TETS), dtype=np.int32)
     
     # Compute Error estimate
-    for itet in range(ntet):
+    for itet in range(N_TETS):
         uinv = (1/ur[itet])*np.eye(3)
         ermat = er[itet]*np.eye(3)
         erc = er[itet]
@@ -834,7 +835,7 @@ def compute_error_single(nodes, tets, tris, edges, centers,
         # TET TRI NODE COUPLINGS
         g_node_ids = tets[:, itet]
         g_edge_ids = edges[:, tet_to_field[:6, itet]]
-        g_tri_ids = tris[:, tet_to_field[6:10, itet]-nedges]
+        g_tri_ids = tris[:, tet_to_field[6:10, itet]-N_EDGES]
         l_edge_ids = local_mapping(g_node_ids, g_edge_ids)
         l_tri_ids = local_mapping(g_node_ids, g_tri_ids)
         triids = tet_to_tri[:,itet]
@@ -842,17 +843,16 @@ def compute_error_single(nodes, tets, tris, edges, centers,
         size_max = circum_sphere_diam(v1,v2,v3,v4)
         #size_max = np.max(edge_lengths[tet_to_edge[:,itet]])
         
-        Volume = compute_volume(vertices[0,:], vertices[1,:], vertices[2,:])
-        
+        TET_VOLUME = compute_volume(vertices[0,:], vertices[1,:], vertices[2,:])
         Rt = size_max
+        
         # Efield
         Ef = Efield[tet_to_field[:,itet]]
         
         # Qt term
-        Qt = Volume*EPS0*np.sum(W_VOL*compute_div(intpts, vertices, Ef, l_edge_ids, l_tri_ids, ermat), axis=0)
+        Qt = TET_VOLUME*EPS0*np.sum(WEIGHTS_VOL*compute_div(intpts, vertices, Ef, l_edge_ids, l_tri_ids, ermat), axis=0)
 
         # Jt term
-        
         Rv1 = compute_curl_curl(vertices, Ef, l_edge_ids, l_tri_ids, uinv)
         Rv2 = -k0**2*(ermat @ compute_field(intpts, vertices, Ef, l_edge_ids, l_tri_ids))
         Rv = 1*Rv2
@@ -860,11 +860,11 @@ def compute_error_single(nodes, tets, tris, edges, centers,
         Rv[1,:] += Rv1[1] # Y-component
         Rv[2,:] += Rv1[2] # Z-component
         
-        Rv[0,:] = Rv[0,:]*W_VOL
-        Rv[1,:] = Rv[1,:]*W_VOL
-        Rv[2,:] = Rv[2,:]*W_VOL
+        Rv[0,:] = Rv[0,:]*WEIGHTS_VOL
+        Rv[1,:] = Rv[1,:]*WEIGHTS_VOL
+        Rv[2,:] = Rv[2,:]*WEIGHTS_VOL
         
-        Jt = -Volume*np.sum(1/(1j*W0*MU0) * Rv, axis=1)
+        Jt = -TET_VOLUME*np.sum(1/(1j*W0*MU0) * Rv, axis=1)
   
         Gt = (1j*W0*np.exp(-1j*k0*Rt)/(4*np.pi*Rt))
         alpha_t[itet] = - Gt/(erc*EPS0) * Qt*Qt - Gt*urc*MU0 * np.sum(Jt*Jt)
@@ -892,7 +892,7 @@ def compute_error_single(nodes, tets, tris, edges, centers,
         for iface in range(4):
             tri_index = triids[iface]
             
-            pec_face = is_pec[tri_index]
+            pec_face = tet_is_pec[tri_index]
             
             i1, i2, i3 = tris[:, tri_index]
             
@@ -911,8 +911,8 @@ def compute_error_single(nodes, tets, tris, edges, centers,
             l3 = np.linalg.norm(n3-n2)
             Rf = np.max(np.array([l1, l2, l3]))
             Rf = diam_circum_circle(n1,n2,n3)
-            Rf_fr[iface,itet] = Rf
-            areas_fr[iface, :, itet] = area
+            Rf_face_residual[iface,itet] = Rf
+            areas_face_residual[iface, :, itet] = area
             
             adj_tets = [int(tri_to_tet[j,triids[iface]]) for j in range(2)]
             adj_tets = [num for num in adj_tets if num not in (itet, -1234)]
@@ -943,7 +943,7 @@ def compute_error_single(nodes, tets, tris, edges, centers,
             adj_tets_mat[iface,itet] = itet_adj
 
     # Compute 2D Gauss quadrature weight matrix
-    fWs = np.empty_like(areas_fr, dtype=np.float64)
+    fWs = np.empty_like(areas_face_residual, dtype=np.float64)
     for i in range(N2D):
         fWs[:,i,:] = DPTS_2D[0,i]
     
@@ -952,16 +952,16 @@ def compute_error_single(nodes, tets, tris, edges, centers,
     Jf_delta = Jf_face1 - Jf_face2
     
     # Perform Gauss-Quadrature integration (4, NTET)
-    Qf_int = np.sum(Qf_delta*areas_fr*fWs, axis=1)
-    Jf_int_x = np.sum(Jf_delta[:,0,:,:]*areas_fr*fWs, axis=1)
-    Jf_int_y = np.sum(Jf_delta[:,1,:,:]*areas_fr*fWs, axis=1)
-    Jf_int_z = np.sum(Jf_delta[:,2,:,:]*areas_fr*fWs, axis=1)
+    Qf_int = np.sum(Qf_delta*areas_face_residual*fWs, axis=1)
+    Jf_int_x = np.sum(Jf_delta[:,0,:,:]*areas_face_residual*fWs, axis=1)
+    Jf_int_y = np.sum(Jf_delta[:,1,:,:]*areas_face_residual*fWs, axis=1)
+    Jf_int_z = np.sum(Jf_delta[:,2,:,:]*areas_face_residual*fWs, axis=1)
     
-    Gf = (1j*W0*np.exp(-1j*k0*Rf_fr)/(4*np.pi*Rf_fr))
+    Gf = (1j*W0*np.exp(-1j*k0*Rf_face_residual)/(4*np.pi*Rf_face_residual))
     alpha_Df = - Gf/(er*EPS0)*(Qf_int*Qf_int) - Gf*(ur*MU0) * (Jf_int_x*Jf_int_x + Jf_int_y*Jf_int_y + Jf_int_z*Jf_int_z)
     
-    alpha_Nf = np.zeros((4, ntet), dtype=np.complex128)
-    for it in range(ntet):
+    alpha_Nf = np.zeros((4, N_TETS), dtype=np.complex128)
+    for it in range(N_TETS):
         for iface in range(4):
             it2 = adj_tets_mat[iface, it]
             if it2==-1:
@@ -973,7 +973,16 @@ def compute_error_single(nodes, tets, tris, edges, centers,
     
     return error, max_elem_size
 
-def compute_error_estimate(field: MWField, pec_tris: list[int]) -> np.ndarray:
+def compute_error_estimate(field: MWField, pec_tris: list[int]) -> tuple[np.ndarray, np.ndarray]:
+    """Top level function to compute the EM error of a field solution.
+
+    Args:
+        field (MWField): The MWField object to analyse
+        pec_tris (list[int]): A list of triangles that ought to be considered PEC (non-neighbouring.)
+
+    Returns:
+        np.ndarray, np.ndarray: The error estimate in an (Ntet,) float array and the tetrahedral size value.
+    """
     mesh = field.mesh
 
     nodes = mesh.nodes
