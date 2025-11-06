@@ -571,6 +571,11 @@ class ModalPort(PortBC):
     @property
     def nmodes(self) -> int:
         if self._last_k0 is None:
+            DEBUG_COLLECTOR.add_report('The modal analysis turned up with no solutions. This can be because:\n' 
+                                       ' - You assigned the wrong materials to geometries.\n' + 
+                                       ' - You simulate at a frequency that is too low.\n' + 
+                                       ' - Your mode face is not appropriately supporting a modal solution.'
+                                       )
             raise ValueError('ModalPort is not properly configured. No modes are defined.')
         return len(self.modes[self._last_k0])
     

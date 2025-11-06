@@ -29,8 +29,8 @@ import time
 import numpy as np
 import pyvista as pv
 from typing import Iterable, Literal, Callable, Any
-from itertools import cycle
 from loguru import logger
+
 ### Color scale
 
 # Define the colors we want to use
@@ -101,25 +101,6 @@ class _RunState:
         self.ctr += 1
     
 ANIM_STATE = _RunState()
-
-# def gen_cmap(mesh, N: int = 256):
-#     # build a linear grid of data‐values (not strictly needed for pure colormap)
-#     vmin, vmax = mesh['values'].min(), mesh['values'].max()
-#     mapping = np.linspace(vmin, vmax, N)
-    
-#     # prepare output
-#     newcolors = np.empty((N, 4))
-    
-#     # normalized positions of control points: start, middle, end
-#     control_pos = np.array([0.0, 0.25, 0.5, 0.75, 1]) * (vmax - vmin) + vmin
-#     # stack control colors
-#     controls = np.vstack([col1, col2, col3, col4, col5])
-    
-#     # interp each RGBA channel independently
-#     for chan in range(4):
-#         newcolors[:, chan] = np.interp(mapping, control_pos, controls[:, chan])
-    
-#     return ListedColormap(newcolors)
 
 def setdefault(options: dict, **kwargs) -> dict:
     """Shorthand for overwriting non-existent keyword arguments with defaults
@@ -285,9 +266,10 @@ class PVDisplay(BaseDisplay):
         self._cbar_lim: tuple[float, float] | None = None
         self.camera_position = (1, -1, 1)     # +X, +Z, -Y
     
-    @property
-    def _mesh(self) -> Mesh3D:
-        return self._state.mesh
+
+    ############################################################
+    #                        GENERIC METHODS                   #
+    ############################################################
     
     def cbar(self, name: str, n_labels: int = 5, interactive: bool = False, clim: tuple[float, float] | None = None ) -> PVDisplay:
         self._cbar_args = dict(title=name, n_labels=n_labels, interactive=interactive)
@@ -433,7 +415,12 @@ class PVDisplay(BaseDisplay):
         self._do_animate = True
         return self
     
-    ## CUSTOM METHODS
+    
+
+    ############################################################
+    #                       SPECIFIC METHODS                  #
+    ############################################################
+
     def mesh_volume(self, volume: DomainSelection) -> pv.UnstructuredGrid:
         tets = self._mesh.get_tetrahedra(volume.tags)
         ntets = tets.shape[0]
@@ -486,7 +473,15 @@ class PVDisplay(BaseDisplay):
         else:
             return None
 
-    ## OBLIGATORY METHODS
+
+    ############################################################
+    #                        EMERGE METHODS                    #
+    ############################################################
+
+    @property
+    def _mesh(self) -> Mesh3D:
+        return self._state.mesh
+    
     def add_object(self, obj: GeoObject | Selection, mesh: bool = False, volume_mesh: bool = True, label: bool = False, *args, **kwargs):
         
         if isinstance(obj, GeoObject):

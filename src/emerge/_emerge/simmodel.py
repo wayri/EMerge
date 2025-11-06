@@ -111,6 +111,7 @@ class Simulation:
         self.load_file: bool = load_file
         self._cache_run: bool = False
         self._file_lines: str = ''
+        self._saved: bool = False
         
         ## Physics
         self.mw: Microwave3D = Microwave3D(self.state, self.mesher, self.settings)
@@ -224,9 +225,11 @@ class Simulation:
             logger.warning('EMerge simulation warnings:')
         for i, report in DEBUG_COLLECTOR.all_reports():
             logger.warning(f'{i}: {report}')
+        
         # Save the file first
         if self.save_file:
-            self.save()
+            self.save(_force_save=False)
+            
         # Finalize GMSH
         if gmsh.isInitialized():
             gmsh.finalize()
@@ -393,9 +396,14 @@ class Simulation:
         self.state.activate(_indx, **variables)
         return self
     
-    def save(self) -> None:
+    def save(self, _force_save: bool = True) -> None:
         """Saves the current model in the provided project directory."""
         # Ensure directory exists
+        
+        if self._saved and not _force_save:
+            logger.debug('File already saved. Terminating save procedure.')
+            return
+        
         if not self.modelpath.exists():
             self.modelpath.mkdir(parents=True, exist_ok=True)
             logger.info(f"Created directory: {self.modelpath}")
@@ -425,6 +433,7 @@ class Simulation:
                 f_out.write(self._file_lines)
             
         logger.info(f"Saved simulation data to: {data_path}")
+        self._saved = True
 
     def load(self) -> None:
         """Loads the model from the project directory."""
