@@ -86,7 +86,7 @@ m.mesher.set_face_size(p2, 5*mm)
 
 # Finally we generate our mesh and view it
 m.generate_mesh()
-m.view(plot_mesh=True)
+m.view()
 # We can now define the modal ports for the in and outputs and set the conductor to PEC.
 port1 = m.mw.bc.ModalPort(p1, 1, modetype='TEM')
 port2 = m.mw.bc.ModalPort(p2, 2, modetype='TEM')

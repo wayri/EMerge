@@ -215,15 +215,15 @@ class Microwave3D:
         if isinstance(frequency, (tuple, list, np.ndarray)):
             self.frequencies = list(frequency)
         else:
-            self.frequencies = [frequency]
+            self.frequencies = [frequency,]
             
         # Safety tests
         if len(self.frequencies) > 200:
-            DEBUG_COLLECTOR.add_report(f'More than 200 frequency points are detected ({len(frequency)}). This may cause slow simulations. Consider using Vector Fitting to subsample S-parameters.')
+            DEBUG_COLLECTOR.add_report(f'More than 200 frequency points are detected ({len(self.frequencies)}). This may cause slow simulations. Consider using Vector Fitting to subsample S-parameters.')
         if min(self.frequencies) < 1e6:
-            DEBUG_COLLECTOR.add_report(f'A frequency smaller than 1MHz has been detected ({min(frequency)} Hz). Perhaps you forgot to include usints like 1e6 for MHz etc.')
+            DEBUG_COLLECTOR.add_report(f'A frequency smaller than 1MHz has been detected ({min(self.frequencies)} Hz). Perhaps you forgot to include usints like 1e6 for MHz etc.')
         if max(self.frequencies) > 1e12:
-            DEBUG_COLLECTOR.add_report(f'A frequency greater than THz has been detected ({min(frequency)} Hz). Perhaps you double counted frequency units like twice 1e6 for MHz etc.')
+            DEBUG_COLLECTOR.add_report(f'A frequency greater than THz has been detected ({min(self.frequencies)} Hz). Perhaps you double counted frequency units like twice 1e6 for MHz etc.')
         
         self.mesher.max_size = self.resolution * 299792458 / max(self.frequencies)
         self.mesher.min_size = 0.1 * self.mesher.max_size
@@ -1104,6 +1104,7 @@ class Microwave3D:
         logger.info('Computing S-parameters')
         
         not_conserved = False
+        conserve_margin = 0.0
         
         single_corr = self._settings.mw_cap_sp_single
         col_corr = self._settings.mw_cap_sp_col
@@ -1185,6 +1186,7 @@ class Microwave3D:
                     if abs(pfield/Pout) > 1.0:
                         logger.warning(f'S-parameter > 1.0 detected: {np.abs(pfield/Pout)}')
                         not_conserved = True
+                        conserve_margin = abs(pfield/Pout) - 1.0
                 active_port.active=False
             
             
@@ -1208,10 +1210,12 @@ class Microwave3D:
                     
                     
 
-        if not_conserved:
+        if not_conserved and conserve_margin > 0.001:
             DEBUG_COLLECTOR.add_report('S-parameters with an amplitude greater than 1.0 detected. This could be due to a ModalPort with the wrong mode type.\n' +
-                                       'Specify the type of mode (TE/TM/TEM) in the constructor using ModalPort(..., modetype=\'TE\') for example.\n' +
-                                       f'Values slightly greater than 1 are possible due to numerical accuracy. Automatic normalization = {single_corr or col_corr}')
+                                       'Specify the type of mode (TE/TM/TEM) in the constructor using ModalPort(..., modetype=\'TE\') for example.')
+        if not_conserved and conserve_margin < 0.001:
+            DEBUG_COLLECTOR.add_report(f'S-parameters with a total column power slightly greater than 1.0 detected ({20*np.log10(conserve_margin):.2f}dB error).\n' +
+                                       'This is compatible with the numerical accuracy of EMerge.')
         logger.info('Simulation Complete!')
         self._simend = time.time()    
         logger.info(f'Elapsed time = {(self._simend-self._simstart):.2f} seconds.')

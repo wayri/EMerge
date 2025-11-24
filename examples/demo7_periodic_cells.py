@@ -104,7 +104,7 @@ abc = model.mw.bc.AbsorbingBoundary(box.back)
 # kz = cos(θ)
 # The arguments of the function are θ,ϕ in degrees.
 periodic_cell.set_scanangle(30,45)
-
+model.view(bc=True)
 # And at last we run our simulation and view the results.
 data = model.mw.run_sweep()
 

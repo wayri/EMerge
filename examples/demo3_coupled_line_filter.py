@@ -12,13 +12,13 @@ mm = 0.001               # meter per millimeter
 mil = 0.0254 * mm        # meter per mil (thousandth of an inch)
 
 # --- Geometric parameters ------------------------------------------------
-W = 20                   # reference trace width (mil)
-D = 20                   # trace separation (mil)
-w0 = 37                 # input/output line width (mil)
-l0 = 100                # input/output line length (mil)
-l1 = 314.22             # coupled section total length (mil)
-l2 = 301.658            # inner coupled section length (mil)
-l3 = 300.589            # outer coupled section length (mil)
+W = 20.0                 # reference trace width (mil)
+D = 20.0                 # trace separation (mil)
+w0 = 37.0                # input/output line width (mil)
+l0 = 100.0               # input/output line length (mil)
+l1 = 314.22              # coupled section total length (mil)
+l2 = 301.658             # inner coupled section length (mil)
+l3 = 300.589             # outer coupled section length (mil)
 
 # widths of each coupled segment (mil)
 w1, w2, w3, w4, w5, w6 = 18.8, 43.484, 44.331, 44.331, 43.484, 18.8
@@ -26,9 +26,10 @@ w1, w2, w3, w4, w5, w6 = 18.8, 43.484, 44.331, 44.331, 43.484, 18.8
 g1, g2, g3, g4, g5, g6 = 9.63, 24.84, 41.499, 41.499, 24.84, 9.63
 
 # substrate thickness (mil) and dielectric constant
-th = 20
-# dielectric constant of substrate (relative)
-e = 0
+th = 20.0
+
+# Overlap margin (optinal in mil)
+e = 0.0 
 
 # overall board dimensions/clearance (for bounding box)
 Wtot = 2 * l1 + 5 * l2 + 7 * e + 2 * l0
@@ -84,7 +85,7 @@ pcb.determine_bounds(topmargin=150, bottommargin=150)
 
 # --- Generate dielectric and air blocks ----------------------------------
 diel = pcb.generate_pcb()                     # substrate dielectric block
-air = pcb.generate_air(4 * th)               # surrounding air box
+air = pcb.generate_air(4 * th)                # surrounding air box
 
 # --- Define ports for simulation ----------------------------------------
 p1 = pcb.modal_port(pcb.load('p1'), width_multiplier=5, height=4 * th)
@@ -104,7 +105,7 @@ model.mesher.set_face_size(p2, 0.5*mm)
 
 # --- Mesh generation and view --------------------------------------------
 model.generate_mesh()                    # build mesh
-model.view(plot_mesh=True)                             # visualize with Gmsh viewer
+model.view()                             # visualize with Gmsh viewer
 
 # --- Boundary conditions ------------------------------------------------
 port1 = model.mw.bc.ModalPort(p1, 1, modetype='TEM')

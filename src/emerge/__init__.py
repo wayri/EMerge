@@ -21,6 +21,7 @@ along with this program; if not, see
 ############################################################
 
 import warnings
+
 warnings.filterwarnings(
     "ignore",
     category=DeprecationWarning,
@@ -30,6 +31,7 @@ warnings.filterwarnings(
 ############################################################
 #               HANDLE ENVIRONMENT VARIABLES              #
 ############################################################
+
 import os
 
 __version__ = "1.2.2"
@@ -79,6 +81,9 @@ howto = _HowtoClass()
 
 logger.debug('Importing complete!')
 
+from ._emerge.install_check import run_installation_checks
+
+run_installation_checks()
 ############################################################
 #                         CONSTANTS                        #
 ############################################################

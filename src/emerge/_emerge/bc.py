@@ -221,6 +221,7 @@ class Periodic(BoundaryCondition):
 
     _color: str = "#5d4fda"
     _name: str = "PeriodicBC"
+    _texture: str = "tex6.png"
     def __init__(self, 
                  selection1: Selection,
                  selection2: Selection,

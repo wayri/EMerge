@@ -21,8 +21,67 @@ import numpy as np
 from .cs import Axis, CoordinateSystem, _parse_vector, Plane
 from typing import Callable, TypeVar, Iterable, Any
 
+# EXCEPTIONS
+
 class SelectionError(Exception):
     pass
+
+    
+TSelection = TypeVar("TSelection", bound="Selection")
+
+
+
+############################################################
+#                         CONSTANTS                        #
+############################################################
+
+ALPHABET = (
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "012345%#"
+)
+CHAR_TO_VAL = {ch: i for i, ch in enumerate(ALPHABET)}
+VAL_TO_CHAR = {i: ch for i, ch in enumerate(ALPHABET)}
+
+
+############################################################
+#                          CLASSES                         #
+############################################################
+
+class _CalculationInterface:
+    """This class is used to give the Selection class a way to 
+    request geometric data about its selection without importing
+    any of the mesh or geometry modules.
+    
+    This is needed to prevent circular imports
+    
+    """
+    def __init__(self):
+        self._ifobj = None
+
+    def getCenterOfMass(self, dim: int, tag: int) -> np.ndarray:
+        return self._ifobj.getCenterOfMass(dim, tag)
+    
+    def getPoints(self, dimtags: list[tuple[int, int]]) -> list[np.ndarray]:
+        return self._ifobj.getPoints(dimtags)
+    
+    def getBoundingBox(self, dim: int, tag: int) -> tuple[float, float, float, float, float, float]:
+        return self._ifobj.getBoundingBox(dim, tag)
+    
+    def getNormal(self, facetag: int) -> np.ndarray:
+       
+        return self._ifobj.getNormal(facetag)
+    
+    def getCharPoint(self, facetag: int) -> np.ndarray:
+        
+        return self._ifobj.getCharPoint(facetag)
+
+_CALC_INTERFACE = _CalculationInterface()
+
+
+############################################################
+#                         FUNCTIONS                        #
+############################################################
 
 def align_rectangle_frame(pts3d: np.ndarray, normal: np.ndarray) -> dict[str, Any]:
     """Tries to find a rectangle as convex-hull of a set of points with a given normal vector.
@@ -93,79 +152,6 @@ def align_rectangle_frame(pts3d: np.ndarray, normal: np.ndarray) -> dict[str, An
       "corners": np.array(corners).reshape(4,3)
     }
 
-def align_rectangle_frame_new(pts3d: np.ndarray, normal: np.ndarray) -> dict[str, Any]:
-    """Find a rectangle frame by using the 4 most 'extreme' points.
-
-    Heuristic:
-      1) Score each point by the sum of distances to all other points.
-      2) Take the 4 points with the highest scores as the rectangle corners.
-      3) From those 4 points, derive center, axes (u: shortest edge, v: longest edge, n: normal),
-         and the 4 corner positions.
-
-    Assumes the point cloud actually samples a rectangle in the plane with the given normal.
-    """
-
-    center_ap = np.mean(pts3d, axis=1)
-    dist = ((pts3d[0,:]-center_ap[0])**2 + (pts3d[1,:] - center_ap[1])**2 + (pts3d[2,:] - center_ap[2])**2)**0.5
-    
-    ids = np.argsort(dist)[-4:]
-    
-    c1 = pts3d[:,ids[0]]
-    c2 = pts3d[:,ids[1]]
-    c3 = pts3d[:,ids[2]]
-    c4 = pts3d[:,ids[3]]
-    
-    origin = (c1+c2+c3+c4)/4
-    
-    c_close, c_diag, c_far = sorted([c2, c3, c4], key= lambda x: np.linalg.norm(x-c1))
-    
-    v = c_close-c1
-    u = c_far-c1
-    v = v/np.linalg.norm(v)
-    u = u/np.linalg.norm(u)
-    n = np.cross(u ,v)
-    
-    return {
-        "origin": origin,
-        "axes": (v, u, n),
-        "corners": np.array([c1, c_close, c_diag, c_far]).T,
-    }
-    
-TSelection = TypeVar("TSelection", bound="Selection")
-
-# Your custom alphabet
-ALPHABET = (
-    "abcdefghijklmnopqrstuvwxyz"
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    "012345%#"
-)
-# Map char → int and int → char
-CHAR_TO_VAL = {ch: i for i, ch in enumerate(ALPHABET)}
-VAL_TO_CHAR = {i: ch for i, ch in enumerate(ALPHABET)}
-
-class _CalculationInterface:
-    
-    def __init__(self):
-        self._ifobj = None
-
-    def getCenterOfMass(self, dim: int, tag: int) -> np.ndarray:
-        return self._ifobj.getCenterOfMass(dim, tag)
-    
-    def getPoints(self, dimtags: list[tuple[int, int]]) -> list[np.ndarray]:
-        return self._ifobj.getPoints(dimtags)
-    
-    def getBoundingBox(self, dim: int, tag: int) -> tuple[float, float, float, float, float, float]:
-        return self._ifobj.getBoundingBox(dim, tag)
-    
-    def getNormal(self, facetag: int) -> np.ndarray:
-       
-        return self._ifobj.getNormal(facetag)
-    
-    def getCharPoint(self, facetag: int) -> np.ndarray:
-        
-        return self._ifobj.getCharPoint(facetag)
-
-_CALC_INTERFACE = _CalculationInterface()
 
 def encode_data(values: tuple[float,...]) -> str:
     """

@@ -153,6 +153,15 @@ class PeriodicCell:
             port.scan_phi = phi # type: ignore
 
     def port_face(self, z: float):
+        """Generate a floquet port face object at the given
+        z-height. This will automatically also add a Floquet Port boundary condition.
+
+        Args:
+            z (float): The z-height for the port
+
+        Raises:
+            NotImplementedError: _description_
+        """
         raise NotImplementedError('')
     
 
@@ -309,6 +318,17 @@ class HexCell(PeriodicCell):
     def volume(self, 
                z1: float,
                z2: float) -> GeoPrism:
+        """Generate a volume object for the given cell geometry
+        # From z1 to z2. 
+
+        Args:
+            z1 (float): The starting z-height
+            z2 (float): The ending z-height
+
+        Returns:
+            GeoPrism: _description_
+        """
+        z1, z2 = min(z1, z2), max(z2, z2)
         xs, ys, zs = zip(self.p1, self.p2, self.p3)
         xs2 = np.array(xs) # type: ignore
         ys2 = np.array(ys) # type: ignore

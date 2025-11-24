@@ -86,8 +86,6 @@ class _GeometryManager:
         self.geometry_names[model].add(geo.name)
 
     def sign_in(self, modelname: str) -> None:
-        # if modelname not in self.geometry_list:
-        #     self.geometry_list[modelname] = []
         self.geometry_list[modelname] = dict()
         self.geometry_names[modelname] = set()
         self.active = modelname
@@ -503,7 +501,16 @@ class GeoObject:
 
     
     def set_material(self, material: Material) -> GeoObject:
+        """Assign a material to this geometry object.
+
+        Args:
+            material (Material): The material to assign
+
+        Returns:
+            GeoObject: This same object
+        """
         self.material = material
+        self.prio_up()
         return self
     
     def prio_set(self, level: int) -> GeoObject:

@@ -62,6 +62,8 @@ class SimState:
         self.clear_mesh()
         
     def init(self) -> None:
+        """Initializes the Simstate to a clean starting point.
+        """
         self.mesh = Mesh3D()
         self.geos = []
         self.reset_geostate()
@@ -69,16 +71,31 @@ class SimState:
         self.sign_on()
         
     def stash(self) -> None:
+        """Stashes the simstate data to run simulations and restore it later.
+        """
         self._stashed = self.data
         self.data = SimulationDataset()
     
     def set_parameters(self, parameters: dict[str, float]) -> None:
+        """ Define the simulation parameter sweep to a set of outer variables
+        defined by a dictionary of string, float pairs.
+
+        Args:
+            parameters (dict[str, float]): The parameter sweep slice.
+        """
         self.params = parameters
         
     def init_data(self) -> None:
+        """Initializes a the dataset with the current parameters
+        """
         self.data.sim.new(**self.params)
         
     def reload(self) -> SimulationDataset:
+        """Reload stashed data into the simstate memory
+
+        Returns:
+            SimulationDataset: _description_
+        """
         old = self._stashed
         self.data = self._stashed
         self._stashed = None
@@ -94,10 +111,17 @@ class SimState:
         self.mesh = mesh
         
     def set_geos(self, geos: list[GeoObject]) -> None:
+        """Activate a set of geometry objects to the simstate geometry field.
+
+        Args:
+            geos (list[GeoObject]): _description_
+        """
         self.geos = geos
         _GEOMANAGER.set_geometries(geos)
 
     def clear_mesh(self) -> None:
+        """resets the current mesh object to an empty one.
+        """
         self.mesh = Mesh3D()
         
     def store_geometry_data(self) -> None:
@@ -109,9 +133,19 @@ class SimState:
         self.data.sim['mesh'] = self.mesh
         
     def get_dataset(self) -> dict[str, Any]:
+        """Create a dict of the file data to store to the harddrive.
+
+        Returns:
+            dict[str, Any]: _description_
+        """
         return dict(simdata=self.data, mesh=self.mesh)
     
     def load_dataset(self, dataset: dict[str, Any]):
+        """Load the data from a dataset
+
+        Args:
+            dataset (dict[str, Any]): _description_
+        """
         self.data = dataset['simdata']
         self.mesh = dataset['mesh']
         
@@ -129,7 +163,11 @@ class SimState:
         
         return self
     
-    #GMSH Copies
+
+    ############################################################
+    #                       GMSH LIKE METHODS                  #
+    ############################################################
+
     def getCenterOfMass(self, dim: int, tag: int) -> np.ndarray:
         if self.mesh.defined is False:
             return gmsh.model.occ.getCenterOfMass(dim, tag)

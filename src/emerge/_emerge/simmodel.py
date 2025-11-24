@@ -748,9 +748,9 @@ class SimulationBeta(Simulation):
         
         ratio = (a0 + np.arctan(b0*P)*q0)
         if last_ratio > 1.0:
-            ratio = ratio/0.85
+            ratio = ratio/0.7
         if last_ratio < 1.0:
-            ratio = ratio*0.85
+            ratio = ratio*0.7
         
         return ratio
     
@@ -861,12 +861,13 @@ class SimulationBeta(Simulation):
                                  convergence: float = 0.02,
                                  magnitude_convergence: float = 2.0,
                                  phase_convergence: float = 180,
+                                 max_tets: int = 1e6,
                                  refinement_ratio: float = 0.6,
                                  growth_rate: float = 2,
                                  minimum_refinement_percentage: float = 20.0, 
                                  error_field_inclusion_percentage: float = 60.0,
                                  minimum_steps: int = 1,
-                                 frequency: float = None,
+                                 frequency: float | list[float] = None,
                                  show_mesh: bool = False) -> SimulationDataset:
         """ A beta-version of adaptive mesh refinement.
 
@@ -897,9 +898,14 @@ class SimulationBeta(Simulation):
         max_freq = np.max(self.mw.frequencies)
         
         if frequency is not None:
-            max_freq = frequency
+            sim_freqs = frequency
+            if isinstance(sim_freqs, float):
+                sim_freqs = [sim_freqs,]
+        else:
+            sim_freqs = [max_freq,]
         
-        S_matrices: list[np.ndarray] = []
+        
+        S_matrices: list[list[np.ndarray]] = []
 
         last_n_tets: int = self.mesh.n_tets
         logger.info(f'Initial mesh has {last_n_tets} tetrahedra')  
@@ -908,23 +914,43 @@ class SimulationBeta(Simulation):
         
         self.state.stash()
         
+        NF = len(sim_freqs)
+        
         for step in range(1,max_steps+1):
             
             self.data.sim.new(iter_step=step)
             
-            data, solve_ids = self.mw._run_adaptive_mesh(step, max_freq)
+            datas = []
+            fields = []
+            Smats = []
             
-            field = data.field[-1]
-            
-            Smat_new = data.scalar[-1].Sp
-            S_matrices.append(Smat_new)
+            for sf in sim_freqs:
+                data, solve_ids = self.mw._run_adaptive_mesh(step, max_freq)
+                datas.append(data)
+                fields.append(data.field[-1])
+                Smats.append(data.scalar[-1].Sp)
+                
+            #field = data.field[-1]
+            #Smat_new = data.scalar[-1].Sp
+            S_matrices.append(Smats)
             
             if step > minimum_steps:
-                S0 = S_matrices[-2]
-                S1 = S_matrices[-1]
-                conv_complex, conv_mag, conv_phase = compute_convergence(S0, S1)
-                logger.info(f'Pass {step}: Convergence = {conv_complex:.3f}, Mag = {conv_mag:.3f}, Phase = {conv_phase:.1f} deg')
-                if conv_complex <= convergence and conv_phase < phase_convergence and conv_mag < magnitude_convergence:
+                S0s = S_matrices[-2]
+                S1s = S_matrices[-1]
+                
+                max_complx = 0
+                max_mag = 0
+                max_phase = 0
+                
+                for i in range(NF):
+                    conv_complex, conv_mag, conv_phase = compute_convergence(S0s[i], S1s[i])
+                    max_complx = max(max_complx, conv_complex)
+                    max_mag = max(max_mag, conv_mag)    
+                    max_phase = max(max_phase, conv_phase)
+                    
+                logger.info(f'Pass {step}: Convergence = {max_complx:.3f}, Mag = {max_mag:.3f}, Phase = {max_phase:.1f} deg')
+                
+                if conv_complex <= convergence and max_phase < phase_convergence and max_mag < magnitude_convergence:
                     logger.info(f'Pass {step}: Mesh refinement passed!')
                     passed += 1
                 else:
@@ -934,11 +960,15 @@ class SimulationBeta(Simulation):
                 logger.info(f'Adaptive mesh refinement successfull with {self.mesh.n_tets} tetrahedra.')
                 break
             
-            error, lengths = field._solution_quality(solve_ids)
+            errors = np.empty((self.mesh.n_tets, NF), dtype=np.float64)
+            for i in range(NF):
+                error, lengths = fields[i]._solution_quality(solve_ids)
+                errors[:,i] = error
+            
+            error = np.mean(errors, axis=1)
                 
             idx = select_refinement_indices(error, error_field_inclusion_percentage/100)
             idx = idx[::-1]
-            
             
             npts = idx.shape[0]
             np_percentage = npts/self.mesh.n_tets * 100
@@ -1005,7 +1035,10 @@ class SimulationBeta(Simulation):
             last_n_tets = self.mesh.n_tets
             if show_mesh:
                 self.view(plot_mesh=True, volume_mesh=True)
-        
+            
+            if last_n_tets > max_tets:
+                logger.warning(f'Aborting refinement because the number of tets exceeds the maximum: {last_n_tets>max_tets}')
+                break
         if passed < min_refined_passes:
             logger.warning('Adaptive mesh refinement did not converge!')
             

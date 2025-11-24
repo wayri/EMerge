@@ -76,8 +76,6 @@ feed2out = em.geo.subtract(feed2out, feed2in)
 # Finally we may define our geometry
 model.commit_geometry()
 
-model.view()
-
 # We define our frequency range and a fine sampling.
 model.mw.set_frequency_range(6e9, 8e9, 21)
 
@@ -88,7 +86,7 @@ for stub in stubs:
 
 # Finally we may create our mesh.
 model.generate_mesh()
-model.view(plot_mesh=True)
+model.view(plot_mesh=False)
 # We define our modal ports, assign the boundary condition and execute a modal analysis to solve for the
 # coaxial field mode.
 port1 = model.mw.bc.ModalPort(model.select.face.near(-lfeed, 0, h), 1, modetype='TEM')

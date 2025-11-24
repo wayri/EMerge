@@ -32,7 +32,7 @@ from typing import Iterable, Literal, Callable, Any
 from loguru import logger
 from pathlib import Path
 from importlib.resources import files
-
+from .utils import determine_projection_data
 ### Color scale
 
 # Define the colors we want to use
@@ -321,6 +321,7 @@ class PVDisplay(BaseDisplay):
         self._update_camera()
         self._add_aux_items()
         self._add_background()
+        
         if self._do_animate:
             self._wire_close_events()
             self.add_text('Press Q to close!',color='red', position='upper_left')
@@ -331,15 +332,40 @@ class PVDisplay(BaseDisplay):
         
         self._reset()
 
-    def _add_background(self):
-        from pyvista import examples
-        from requests.exceptions import ConnectionError
-        
+    def _get_path(self, filename: str) -> str:
+        """Generates a filename for the EMerge package directory in the PyVista folder
+
+        Args:
+            filename (str): _description_
+
+        Returns:
+            str: _description_
+        """
+        return str(Path(files('emerge')) / '_emerge' / 'plot' / 'pyvista' / 'textures' / filename)
+    
+    def _get_texture(self, filename: str) -> pv.Texture | None:
+        """Returns a PyVista Texture object for a filename in the EMerge directlry
+
+        Args:
+            filename (str): The filename without path
+
+        Returns:
+            pv.Texture | None: _description_
+        """
         try:
-            cubemap = examples.download_sky_box_cube_map()
-            self._plot.set_environment_texture(cubemap)
-        except ConnectionError:
-            logger.warning(f'No internet, no background texture will be used.')
+            tex = pv.read_texture(self._get_path(filename))
+            return tex
+        except FileNotFoundError:
+            logger.error(f'File {filename} not found. ignoring image')
+        return None
+        
+    def _add_background(self):
+        
+        picture = self._get_texture('background.png')
+        picture.interpolate = True
+        picture.mipmap = True
+        if picture is not None:
+            self._plot.set_environment_texture(picture)
         
 
     def _reset(self):
@@ -567,17 +593,16 @@ class PVDisplay(BaseDisplay):
         mesh_obj = self.mesh(obj)
         
         if texture is not None and texture != 'None':
-            from .utils import determine_projection_data
-            directory = Path(files('emerge')) / '_emerge' / 'plot' / 'pyvista' / 'textures' / texture
-            if directory.is_file():
-                tex_image = pv.read_texture(directory)
+            
+            tex_image = self._get_texture(texture)
+            if tex_image is not None:
                 kwargs['texture'] = tex_image
                 output = mesh_obj.point_data
                 origin = output.dataset.center
                 points = output.dataset.points.T
                 tris = output.dataset.cells_dict[5].T
                 origin, u, v = determine_projection_data(points, tris)
-                mesh_obj.texture_map_to_plane(origin, origin+u, origin+v, inplace=True)
+                mesh_obj.texture_map_to_plane(origin=origin, point_u=origin+u, point_v=origin+v, inplace=True)
             
         if mesh is True and volume_mesh is True:
             mesh_obj = mesh_obj.extract_all_edges()

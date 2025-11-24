@@ -23,6 +23,10 @@ from loguru import logger
 from ...const import C0, MU0, EPS0
 
 
+############################################################
+#                    OPTIMIZED FUNCTIONS                   #
+############################################################
+
 @njit(types.Tuple((f8[:,:], f8[:]))(f8[:,:], i8[:,:], f8[:], b1[:]), nogil=True, cache=True)
 def tet_to_node(nodes, tets, sizes, included):
     """
@@ -133,7 +137,6 @@ def diam_circum_circle(v1: np.ndarray, v2: np.ndarray, v3: np.ndarray, eps: floa
 
     return (a * b * c) / denom  # diameter = 2R
 
-
 @njit(cache=True, nogil=True)
 def circum_sphere_diam(v1: np.ndarray, v2: np.ndarray, v3: np.ndarray, v4: np.ndarray, eps: float = 1e-14) -> float:
     """
@@ -158,9 +161,9 @@ def circum_sphere_diam(v1: np.ndarray, v2: np.ndarray, v3: np.ndarray, v4: np.nd
         return np.inf  # coplanar/degenerate
 
     rhs = np.empty(3, dtype=np.float64)
-    rhs[0] = np.dot(p1, p1) - np.dot(p4, p4)
-    rhs[1] = np.dot(p2, p2) - np.dot(p4, p4)
-    rhs[2] = np.dot(p3, p3) - np.dot(p4, p4)
+    rhs[0] = np.sum(p1**2) - np.sum(p4**2)
+    rhs[1] = np.sum(p2**2) - np.sum(p4**2)
+    rhs[2] = np.sum(p3**2) - np.sum(p4**2)
 
     # Solve for circumcenter
     c = np.linalg.solve(M, rhs)
@@ -744,7 +747,6 @@ def compute_div(coords: np.ndarray,
     
     return difE
 
-
 @njit(c16[:](f8[:,:], c16[:], i8[:,:], i8[:,:], c16[:,:]), cache=True, nogil=True)
 def compute_curl_curl(
                     vertices: np.ndarray,
@@ -942,7 +944,7 @@ def compute_error_single(nodes, tets, tris, edges, centers,
 
         # Jt term
         Rv1 = compute_curl_curl(vertices, Ef, l_edge_ids, l_tri_ids, uinv)
-        Rv2 = -k0**2*(ermat @ compute_field(intpts, vertices, Ef, l_edge_ids, l_tri_ids))
+        Rv2 = -k0**2*matmul(ermat, compute_field(intpts, vertices, Ef, l_edge_ids, l_tri_ids))
         Rv = 1*Rv2
         Rv[0,:] += Rv1[0] # X-component
         Rv[1,:] += Rv1[1] # Y-component

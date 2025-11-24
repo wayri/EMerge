@@ -155,6 +155,7 @@ abc = airbox.outside()
 m.mw.bc.LumpedPort(port, 1, Z0=50)
 m.mw.bc.AbsorbingBoundary(abc)
 
+m.view(plot_mesh=True, volume_mesh=False)
 # Before we run we call our adaptive mesh refinement at 7GHz. You can change the frequency yourself.
 m.adaptive_mesh_refinement(frequency=7e9)
 m.view(plot_mesh=True, volume_mesh=False) # and view the resultant mesh
