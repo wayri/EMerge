@@ -1235,6 +1235,7 @@ class SurfaceImpedance(RobinBC):
                  surface_roughness: float = 0,
                  thickness: float | None = None,
                  sr_model: Literal['Hammerstad-Jensen'] = 'Hammerstad-Jensen',
+                 impedance_function: Callable | None = None,
                  ):
         """Generates a SurfaceImpedance bounary condition.
 
@@ -1255,6 +1256,7 @@ class SurfaceImpedance(RobinBC):
             surface_roughness (float, optional): The surface roughness. Defaults to 0.
             thickness (float | None, optional): The layer thickness. Defaults to None
             sr_model (Literal["Hammerstad-Jensen", optional): The surface roughness model. Defaults to 'Hammerstad-Jensen'.
+            impedance_function (Callable, optional): A user defined surface impedance function as function of frequency.
         """
         super().__init__(face)
 
@@ -1277,6 +1279,7 @@ class SurfaceImpedance(RobinBC):
         
         self._sr: float = surface_roughness
         self._sr_model: str = sr_model
+        self._Zf: Callable | None = None
     
     def get_basis(self) -> np.ndarray | None:
         return None
@@ -1298,9 +1301,11 @@ class SurfaceImpedance(RobinBC):
         Returns:
             complex: The γ-constant
         """
-        
         w0 = k0*C0
         f0 = w0/(2*np.pi)
+        if self._Zf is not None:
+            return 1j*k0*Z0/self._Zf(f0)
+        
         sigma = self.sigma
         mur = self._material.ur.scalar(f0)
         er = self._material.er.scalar(f0)

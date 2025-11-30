@@ -984,14 +984,14 @@ class Microwave3D:
             return job
         
         
-        matset: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []     
+        #matset: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []     
 
         self._compute_modes(frequency)
 
         logger.debug(f'Simulation frequency = {frequency/1e9:.3f} GHz') 
         
-        if automatic_modal_analysis:
-            self._compute_modes(frequency)
+        #if automatic_modal_analysis:
+        #    self._compute_modes(frequency)
             
         job, mats = self.assembler.assemble_freq_matrix(self.basis, materials, 
                                                 self.bc.boundary_conditions, 
