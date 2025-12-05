@@ -224,22 +224,11 @@ def select_refinement_indices(errors: np.ndarray, refine: float) -> np.ndarray:
         np.ndarray of indices (ints) sorted by decreasing error.
     """
     # Flatten and sanitize
-    errs = np.abs(np.ravel(errors).astype(float))
-    n = errs.size
-    if n == 0:
-        return np.empty(0, dtype=int)
-
-    errs[~np.isfinite(errs)] = 0.0  # replace NaN/inf by 0
-    theta = float(np.clip(refine, 0.0, 1.0))
-    if theta <= 0.0:
-        return np.empty(0, dtype=int)
-
-    # Dörfler uses squared indicators
+    errs = np.abs(errors)
+    
     ind = errs * errs
-    total = ind.sum()
-    if total <= 0.0:
-        return np.empty(0, dtype=int)
-
+    total = np.sum(ind)
+    
     # Sort by decreasing indicator
     order = np.argsort(ind)[::-1]
     sum_error = 0
@@ -247,16 +236,10 @@ def select_refinement_indices(errors: np.ndarray, refine: float) -> np.ndarray:
     for index in order:
         sum_error += ind[index]
         indices.append(index)
-        if sum_error >= refine*total and len(indices) >= 10:
+        if sum_error >= refine*total and len(indices) >= 20:
             break
     
-    #cum = np.cumsum(ind[order])
-
-    # Smallest m with cumulative ≥ theta * total
-    #m = int(np.searchsorted(cum, theta * total, side="left")) + 1
-
-    #chosen = order[:m]                # already from largest to smallest
-    return np.array(indices)#chosen.astype(int)
+    return np.array(indices)
 
 @njit(f8[:](i8, f8[:,:], f8, f8, f8[:]), cache=True, nogil=True, parallel=False)
 def compute_size(index: int, coords: np.ndarray, gr: float, scaler: float, dss: np.ndarray) -> float:

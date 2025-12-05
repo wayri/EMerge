@@ -326,10 +326,12 @@ def unite(*objects: GeoObject) -> GeoObject:
     
     main._exists = False
     dts = []
-    for other in objects:
+    for other in rest:
         dts.extend(other.dimtags)
         other._exists = False
-    new_dimtags, mapping = gmsh.model.occ.fuse(dts, main.dimtags)
+    
+    
+    new_dimtags, mapping = gmsh.model.occ.fuse(main.dimtags, dts)
     
     newname = 'Union[' + ','.join([obj.name for obj in objects]) + ']'
     new_obj = GeoObject.from_dimtags(new_dimtags)._take_tools(*objects)

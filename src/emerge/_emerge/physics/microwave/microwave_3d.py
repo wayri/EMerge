@@ -1180,14 +1180,13 @@ class Microwave3D:
                 # Compute the S-parameters
                 # Define the field interpolation function
                 fieldf = self.basis.interpolate_Ef(solution, tetids=port_tets)
-                Pout = 0.0 + 0j
 
                 # Active port power
                 tris = mesh.get_triangles(active_port.tags)
                 tri_vertices = mesh.tris[:,tris]
-                pfield, pmode = self._compute_s_data(active_port, fieldf, tri_vertices, k0, ertri[:,:,tris], urtri[:,:,tris])
-                logger.debug(f'[{active_port.port_number}] Active port amplitude = {np.abs(pfield):.3f} (Excitation = {np.abs(pmode):.2f})')
-                Pout = pmode
+                EdotF_act, EdotE_act = self._compute_s_data(active_port, fieldf, tri_vertices, k0, ertri[:,:,tris], urtri[:,:,tris])
+                logger.debug(f'[{active_port.port_number}] Active port amplitude = {np.abs(EdotF_act):.3f} (Excitation = {np.abs(EdotE_act):.2f})')
+                Amp_act = np.sqrt(active_port.power)
                 
                 #Passive ports
                 for bc in all_ports:
@@ -1195,13 +1194,14 @@ class Microwave3D:
                     fieldf = self.basis.interpolate_Ef(solution, tetids=port_tets)
                     tris = mesh.get_triangles(bc.tags)
                     tri_vertices = mesh.tris[:,tris]
-                    pfield, pmode = self._compute_s_data(bc, fieldf,tri_vertices, k0, ertri[:,:,tris], urtri[:,:,tris])
-                    logger.debug(f'[{bc.port_number}] Passive amplitude = {np.abs(pfield):.3f}')
-                    scalardata.write_S(bc.port_number, active_port.port_number, pfield/Pout)
-                    if abs(pfield/Pout) > 1.0:
-                        logger.warning(f'S-parameter ({bc.port_number},{active_port.port_number}) > 1.0 detected: {np.abs(pfield/Pout)}')
+                    EdotF_pas, EdotE_pas = self._compute_s_data(bc, fieldf,tri_vertices, k0, ertri[:,:,tris], urtri[:,:,tris])
+                    Amp_pas = EdotF_pas/EdotE_pas
+                    logger.debug(f'[{bc.port_number}] Passive amplitude = {np.abs(EdotF_pas):.3f}')
+                    scalardata.write_S(bc.port_number, active_port.port_number, Amp_pas/Amp_act)
+                    if abs(Amp_pas/Amp_act) > 1.0:
+                        logger.warning(f'S-parameter ({bc.port_number},{active_port.port_number}) > 1.0 detected: {np.abs(Amp_pas/Amp_act)}')
                         not_conserved = True
-                        conserve_margin = abs(pfield/Pout) - 1.0
+                        conserve_margin = abs(Amp_pas/Amp_act) - 1.0
                 active_port.active=False
             
             
@@ -1272,7 +1272,7 @@ class Microwave3D:
                 a = bc.voltage
                 b = (V-bc.voltage)
             else:
-                a = 0
+                a = bc.voltage
                 b = V
             
             a_sig = a*csqrt(1/(2*bc.Z0))
@@ -1287,8 +1287,8 @@ class Microwave3D:
             elif bc.modetype(k0) == 'TM':
                 const = 1/((erp[0,0,:] + erp[1,1,:] + erp[2,2,:])/3)
             const = np.squeeze(const)
-            field_p = sparam_field_power(self.mesh.nodes, tri_vertices, bc, k0, fieldfunction, const, 5)
-            mode_p = sparam_mode_power(self.mesh.nodes, tri_vertices, bc, k0, const, 5)
+            field_p = sparam_field_power(self.mesh.nodes, tri_vertices, bc, k0, fieldfunction, const, 4)
+            mode_p = sparam_mode_power(self.mesh.nodes, tri_vertices, bc, k0, const, 4)
             return field_p, mode_p
 
 

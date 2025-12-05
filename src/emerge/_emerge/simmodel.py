@@ -869,7 +869,7 @@ class SimulationBeta(Simulation):
                                  refinement_ratio: float = 0.6,
                                  growth_rate: float = 1.6,
                                  minimum_refinement_percentage: float = 20.0, 
-                                 error_field_inclusion_percentage: float = 55.0,
+                                 error_field_inclusion_percentage: float = 50.0,
                                  minimum_steps: int = 1,
                                  frequency: float | list[float] = None,
                                  show_mesh: bool = False) -> SimulationDataset:
@@ -1019,11 +1019,12 @@ class SimulationBeta(Simulation):
                 Ratios.append(refinement_ratio)
                 Percentages.append(percentage)
                 
-                if percentage == 0.0:
-                    logger.warning(f'No refinement realized, decreasing refinment ratio.')
-                    refinement_ratio = refinement_ratio * 0.5
-                    self.mesher.set_ratio(refinement_ratio)
-                    continue
+                if len(Percentages) >= 2:
+                    if abs(Percentages[-2]-Percentages[-1]) == 0.0:
+                        logger.warning(f'No refinement realized, decreasing refinment ratio.')
+                        refinement_ratio = refinement_ratio * 0.5
+                        self.mesher.set_ratio(refinement_ratio)
+                        continue
                 
                 if percentage < minimum_refinement_percentage or percentage > (minimum_refinement_percentage*2):
                     
