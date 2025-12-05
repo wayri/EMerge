@@ -15,7 +15,7 @@ For ARM MacOS users it is reccommended to install UMFPACK and run this using mul
 """
 
 m = em.SimulationBeta('Vivaldi')
-m.check_version("1.3.2")
+m.check_version("1.3.3")
 
 mm = 0.001          # Millimeter
 g = 0.3*mm          # Narrow exponential taper slot gap size
