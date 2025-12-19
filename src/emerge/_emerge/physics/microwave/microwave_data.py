@@ -1053,9 +1053,9 @@ class MWField:
         """ Interpolate the field on the node coordinates of the surface."""
         nodes = self.mesh.nodes
         ids = self.mesh.get_nodes(selection.tags)
-        x = nodes[0,ids]
-        y = nodes[1,ids]
-        z = nodes[2,ids]
+        x = nodes[0,:]
+        y = nodes[1,:]
+        z = nodes[2,:]
         field = self.interpolate(x, y, z, False)
         return field
     
