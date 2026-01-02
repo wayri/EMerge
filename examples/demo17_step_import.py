@@ -120,11 +120,11 @@ ffdata = data.field.find(freq=9e9).farfield_3d(abc)
 sim.display.add_objects(*sim.all_geos(), opacity=0.1)
 
 # Overlay 3D far-field surface and internal field cut for inspection.
-sim.display.add_surf(*ffdata.surfplot('normE', 'abs',
+sim.display.add_field(ffdata.surfplot('normE', 'abs',
                                       rmax=40*mm,
                                       offset=(0, 0, Lrod+10*mm)))
-sim.display.animate().add_surf(
-    *data.field.find(freq=9e9)
+sim.display.animate().add_field(
+    data.field.find(freq=9e9)
      .cutplane(1*mm, x=0)
      .scalar('Ey', 'complex'),
     symmetrize=True,

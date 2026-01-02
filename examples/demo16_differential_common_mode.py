@@ -79,7 +79,7 @@ field = data.field.find(freq=3e9)  # pick a field solution at 3 GHz
 for i, text in enumerate(['Port 1','Port 2','Port 3','Port 4']):
     field.excite_port(i+1)  # single-ended excitation i+1
     model.display.add_objects(*model.all_geos())
-    model.display.animate().add_surf(*field.cutplane(1*mm, z=-0.7*mm).scalar('Ez','real'), symmetrize=True)
+    model.display.animate().add_field(field.cutplane(1*mm, z=-0.7*mm).scalar('Ez','real'), symmetrize=True)
     model.display.add_title(text)
     model.display.show()
 
@@ -92,6 +92,6 @@ field.combine_ports(3,4)
 for i, text in enumerate(['Port 1 differential mode','Port 1 common mode','Port 2 differential mode','Port 2 common mode']):
     field.excite_port(i+1)  # modal excitation i+1 after combination
     model.display.add_objects(*model.all_geos())
-    model.display.animate().add_surf(*field.cutplane(1*mm, z=-0.7*mm).scalar('Ez','real'), symmetrize=True)
+    model.display.animate().add_field(field.cutplane(1*mm, z=-0.7*mm).scalar('Ez','real'), symmetrize=True)
     model.display.add_title(text)
     model.display.show()

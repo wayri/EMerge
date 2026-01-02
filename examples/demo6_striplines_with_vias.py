@@ -92,6 +92,6 @@ model.display.add_portmode(p1, data.field[3].k0)
 # You can use the cutplane method of the BaseDataset class
 # This is equivalent to the interpolate method except it automatically generates
 # the point cloud based on a plane x,y or z coordinate.
-model.display.add_quiver(*data.field[3].cutplane(ds=0.001, z=-0.00025).vector('E'))
-model.display.animate().add_surf(*data.field[3].cutplane(ds=0.001, z=-0.00075).scalar('Ez','complex'), symmetrize=True)
+model.display.add_field(data.field[3].cutplane(ds=0.001, z=-0.00025).vector('E')) # Plotting full E-fields automatically registers as vector plots
+model.display.animate().add_field(data.field[3].cutplane(ds=0.001, z=-0.00075).scalar('Ez','complex'), symmetrize=True)
 model.display.show()

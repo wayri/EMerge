@@ -114,5 +114,5 @@ m.display.add_object(traces, opacity=0.1)
 # Cut-plane of Ez field through substrate center
 cut = data.field.find(freq=0.15e9)\
     .cutplane(0.1 * mm, z=-th/2 * mm)
-m.display.animate().add_surf(*cut.scalar('Ez', 'complex'), symmetrize=True)
+m.display.animate().add_field(cut.scalar('Ez', 'complex'), symmetrize=True)
 m.display.show()
