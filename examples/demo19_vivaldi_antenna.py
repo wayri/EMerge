@@ -1,6 +1,8 @@
 import emerge as em
 import numpy as np
 from emerge.plot import plot_sp, plot_ff_polar, smith
+
+from emerge import EMergeTheme
 """ SLOTTED VIVALDI ANTENNA
 
 In this demo we will look at the design of a slotted Vivaldi antenna in EMerge and how it can be setup.
@@ -140,7 +142,7 @@ ground = em.geo.subtract(ground, slots)
 m.commit_geometry()
 
 # We set our frequency range from 3GHz to 10GHz in 21 setps.
-m.mw.set_frequency_range(3e9, 8e9, 21)
+m.mw.set_frequency_range(3e9, 8e9, 15)
 m.mw.set_resolution(0.33)
 
 # Here we set our boundary conditions. The Absorbing boundary surfaace is the outside of the airbox.
