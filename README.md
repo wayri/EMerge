@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/766087649.svg)](https://doi.org/10.5281/zenodo.17025518)
+
 ## Introduction
 
 Hello everybody. Thanks for showing interest in this repository.
