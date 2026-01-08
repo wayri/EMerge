@@ -64,11 +64,13 @@ except ModuleNotFoundError:
 #                           MUMPS                          #
 ############################################################
 
-
+from .solve_interfaces.mumps_interface import MUMPSInterface # type: ignore
+_MUMPS_AVAILABLE = True
 try:
     from .solve_interfaces.mumps_interface import MUMPSInterface # type: ignore
     _MUMPS_AVAILABLE = True
-except ModuleNotFoundError:
+except ModuleNotFoundError as e:
+    logger.debug(e)
     logger.debug('MUMPS not found, defaulting to SuperLU')
     
 ############################################################
@@ -1085,6 +1087,7 @@ class SolveRoutine:
         """
         for solver in solvers:
             if isinstance(solver, EMSolver):
+                print(self.solvers)
                 self.forced_solver = [self.solvers[solver],] 
             else:
                 self.forced_solver = [solver,]

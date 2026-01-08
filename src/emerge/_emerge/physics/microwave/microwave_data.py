@@ -250,6 +250,29 @@ class MWData:
     def setreport(self, report, **vars):
         self.sim.new(**vars)['report'] = report
 
+    def export_farfields(self, filename: str, 
+                         face: FaceSelection | GeoSurface,
+                         thetas: np.ndarray,
+                         phis: np.ndarray,
+                         origin: tuple[float, float, float] | None = None,
+                         syms: list[Literal['Ex','Ey','Ez', 'Hx','Hy','Hz']] | None = None,
+                         precision: int = 4, 
+                         frequencies: list[float] | None = None, **parameters) -> None:
+        from emsutil.inexport.ffdata import export_ffdata
+        
+        if frequencies is None:
+            frequencies = self.scalar.axis('freq')
+        
+        ffsets = []
+        freq_data = []
+        for freq in frequencies:
+            field = self.field.find(freq=freq, **parameters)
+            freq_data.append(field.freq)
+            ffsets.append(field.farfield_3d(face, thetas, phis, origin, syms))
+        
+        export_ffdata(filename, thetas, phis, np.array(freq_data), ffsets, precision=precision)
+        
+        
 class _EHSign:
     """A small class to manage the sign of field components when computing the far-field with Stratton-Chu
     """
