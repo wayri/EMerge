@@ -1087,7 +1087,6 @@ class SolveRoutine:
         """
         for solver in solvers:
             if isinstance(solver, EMSolver):
-                print(self.solvers)
                 self.forced_solver = [self.solvers[solver],] 
             else:
                 self.forced_solver = [solver,]
