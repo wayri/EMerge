@@ -1328,18 +1328,15 @@ class SimulationBeta(Simulation):
             included[idx] = True
             
             coords, sizes = tet_to_node(self.mesh.nodes, self.mesh.tets, lengths, included)
-            self.mesher.add_refinement_points(coords, sizes, refinement_ratio*np.ones_like(sizes))#self.mw.mesh.centers[:,idx], lengths[idx], refinement_ratio*np.ones_like(lengths[idx]))
+            self.mesher._amrobj.add_refinement_points(coords, sizes, refinement_ratio*np.ones_like(sizes))#self.mw.mesh.centers[:,idx], lengths[idx], refinement_ratio*np.ones_like(lengths[idx]))
                 
-            new_ids = reduce_point_set(self.mesher._amr_coords, growth_rate, self.mesher._amr_sizes, refinement_ratio, 0.20)
+            new_ids = reduce_point_set(self.mesher._amrobj._amr_coords, growth_rate, self.mesher._amrobj._amr_sizes, refinement_ratio, 0.20)
             
-            nremoved = self.mesher._amr_coords.shape[1] - len(new_ids)
+            nremoved = self.mesher._amrobj.npts - len(new_ids)
             
             logger.info(f'    Pass {step}: Added {len(sizes) - nremoved} new refinement points with ratio {refinement_ratio}.')
             
-            self.mesher._amr_coords = self.mesher._amr_coords[:,new_ids]
-            self.mesher._amr_sizes = self.mesher._amr_sizes[new_ids]
-            self.mesher._amr_ratios = self.mesher._amr_ratios[new_ids]
-            self.mesher._amr_new = self.mesher._amr_new[new_ids]
+            self.mesher._amrobj.reduce_set(new_ids)
             
             logger.debug(f'    Initial refinement ratio: {refinement_ratio}')
             
@@ -1352,7 +1349,7 @@ class SimulationBeta(Simulation):
                     break
                 counter += 1
                 self._reset_mesh()
-                self.mesher.set_refinement_function(growth_rate, 2.0)
+                self.mesher._amrobj.set_refinement_function(growth_rate, 2.0)
                 self.generate_mesh(True)
                 percentage = (self.mesh.n_tets/last_n_tets - 1) * 100
                 logger.info(f'    Pass {step}: New mesh has {self.mesh.n_tets} (+{percentage:.1f}%) tetrahedra.')  
@@ -1364,14 +1361,14 @@ class SimulationBeta(Simulation):
                     if abs(Percentages[-2]-Percentages[-1]) == 0.0:
                         logger.warning(f'No refinement realized, decreasing refinment ratio.')
                         refinement_ratio = refinement_ratio * 0.5
-                        self.mesher.set_ratio(refinement_ratio)
+                        self.mesher._amrobj.set_ratio(refinement_ratio)
                         continue
                 
                 if percentage < minimum_refinement_percentage or percentage > (minimum_refinement_percentage*2):
                     
                     refinement_ratio = self.compute_ratio(np_percentage, Ratios, Percentages, minimum_refinement_percentage)
                     logger.info(f'    Refinement target not reached! New ratio = {refinement_ratio:.3f}')
-                    self.mesher.set_ratio(refinement_ratio)
+                    self.mesher._amrobj.set_ratio(refinement_ratio)
                     if refinement_ratio >= 1.0:
                         logger.warning(f'Refinement ratio pushed above 1.0... continuing with current percentage.')
                         break

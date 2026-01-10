@@ -24,6 +24,7 @@ from typing import Iterable, Callable, Any, TypeVar
 from loguru import logger
 from enum import Enum
 from .bc import Periodic, BoundaryCondition
+from scipy.spatial import cKDTree
 
 class MeshError(Exception):
     pass
@@ -69,6 +70,84 @@ def unpack_lists(_list: Any, collector: list | None = None) -> list[Any]:
     
     return collector
 
+class AMRPoints:
+    def __init__(self):
+        self._amr_fields: list[int] = []
+        self._amr_coords: np.ndarray = None
+        self._amr_sizes: np.ndarray = None
+        self._amr_ratios: np.ndrray = None
+        self._amr_new: np.ndarray = None
+        self.kdtree: cKDTree | None = None
+
+    @property
+    def npts(self) -> int:
+        return self._amr_coords.shape[1]
+    
+    def reduce_set(self, ids: np.ndarray) -> None:
+        self._amr_coords = self._amr_coords[:,ids]
+        self._amr_sizes = self._amr_sizes[ids]
+        self._amr_ratios = self._amr_ratios[ids]
+        self._amr_new = self._amr_new[ids]
+        
+    def _reset_amr_points(self) -> None:
+        for tag in self._amr_fields:
+            gmsh.model.mesh.field.remove(tag)
+        self._amr_fields = []
+    
+    def add_refinement_points(self, coords: np.ndarray, sizes: np.ndarray, ratios: np.ndarray):
+        if self._amr_coords is None:
+            self._amr_coords = coords
+        else:
+            self._amr_coords = np.hstack((self._amr_coords, coords))
+        
+        if self._amr_sizes is None:
+            self._amr_sizes = sizes
+        else:
+            self._amr_sizes = np.hstack((self._amr_sizes, sizes))
+        
+        if self._amr_ratios is None:
+            self._amr_ratios = ratios
+        else:
+            self._amr_ratios = np.hstack((self._amr_ratios, ratios))
+        
+        if self._amr_new is None:
+            self._amr_new = np.ones_like(sizes)
+        else:
+            self._amr_new = np.hstack((0.0*self._amr_new, np.ones_like(sizes)))
+    
+    def set_refinement_function(self,
+                                gr: float = 1.5,
+                                _qf: float = 1.0):
+        xs = self._amr_coords[0,:]
+        ys = self._amr_coords[1,:]
+        zs = self._amr_coords[2,:]
+        newsize = self._amr_ratios*self._amr_sizes
+        A = newsize/gr
+        B = (1-gr)/gr
+        
+        if xs.shape[0] < 1000:
+            from numba import njit, i8, f8
+            @njit(f8(i8,i8,f8,f8,f8,f8), nogil=True, fastmath=True, parallel=False)
+            def func(dim, tag, x, y, z, lc):
+                sizes = np.maximum(newsize, A - B * _qf*np.sqrt((x-xs)**2 + (y-ys)**2 + (z-zs)**2))
+                return min(lc,  float(np.min(sizes)))
+        else:   
+            points = np.vstack((xs, ys, zs)).T
+            self.kdtree = cKDTree(points)
+            def func(dim, tag, x, y, z, lc):
+                query_point = np.array([x, y, z])
+                d, ids = self.kdtree.query(query_point, k=3)
+
+                nsize = np.maximum(newsize[ids], A[ids] - B * _qf* d)
+                return min(lc,  float(np.min(nsize)))
+            
+        gmsh.model.mesh.setSizeCallback(func)
+    
+    def set_ratio(self, ratio: float) -> None:
+        newids = self._amr_new==1
+        self._amr_ratios[newids] = ratio
+        return self._amr_ratios[newids][0]
+    
 class Mesher:
 
     def __init__(self):
@@ -81,7 +160,7 @@ class Mesher:
         self._amr_sizes: np.ndarray = None
         self._amr_ratios: np.ndrray = None
         self._amr_new: np.ndarray = None
-
+        self._amrobj = AMRPoints()
         self.min_size: float = None
         self.max_size: float = None
         self.periodic_cell: PeriodicCell = None
@@ -234,18 +313,6 @@ class Mesher:
         for tag in self._amr_fields:
             gmsh.model.mesh.field.remove(tag)
         self._amr_fields = []
-        
-    def _set_amr_point(self, tags: list[int], max_size: float) -> None:
-        """Define the size of the mesh on a point
-
-        Args:
-            tags (list[int]): The tags of the geometry
-            max_size (float): The maximum size (in meters)
-        """
-        ctag = gmsh.model.mesh.field.add("Constant")
-        gmsh.model.mesh.field.set_numbers(ctag, "PointsList", tags)
-        gmsh.model.mesh.field.set_number(ctag, "VIn", max_size)
-        self._amr_fields.append(ctag)
 
     def _configure_bc_size(self, bcs: list[BoundaryCondition]) -> None:
         """Writes size constraints for the boundary conditions
@@ -339,11 +406,8 @@ class Mesher:
         newsize = self._amr_ratios*self._amr_sizes
         A = newsize/gr
         B = (1-gr)/gr
-        from numba import njit, i8, f8
-
-        ns_list = [x for x in newsize]
-        A_list = [x/gr for x in newsize]
         
+        from numba import njit, i8, f8
         @njit(f8(i8,i8,f8,f8,f8,f8), nogil=True, fastmath=True, parallel=False)
         def func(dim, tag, x, y, z, lc):
             sizes = np.maximum(newsize, A - B * _qf*np.clip(np.sqrt((x-xs)**2 + (y-ys)**2 + (z-zs)**2) - newsize*0, a_min=0, a_max=None))
@@ -355,18 +419,6 @@ class Mesher:
         newids = self._amr_new==1
         self._amr_ratios[newids] = ratio
         return self._amr_ratios[newids][0]
-    
-    def add_refinement_point(self,
-                             coordinate: np.ndarray,
-                             refinement: float,
-                             size: float,
-                             gr: float = 1.5):
-        x0, y0, z0 = coordinate
-        disttag = gmsh.model.mesh.field.add("MathEval")
-        newsize = refinement*size
-        funcstr = f"({newsize})/({gr}) - (1-{gr})/({gr}) * Sqrt((x-({x0}))^2+ (y-({y0}))^2 + (z-({z0}))^2)"
-        gmsh.model.mesh.field.setString(disttag, "F", funcstr)
-        self.mesh_fields.append(disttag)
         
     def set_boundary_size(self, 
                           boundary: GeoObject | Selection | Iterable, 

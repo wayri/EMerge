@@ -64,8 +64,6 @@ except ModuleNotFoundError:
 #                           MUMPS                          #
 ############################################################
 
-from .solve_interfaces.mumps_interface import MUMPSInterface # type: ignore
-_MUMPS_AVAILABLE = True
 try:
     from .solve_interfaces.mumps_interface import MUMPSInterface # type: ignore
     _MUMPS_AVAILABLE = True

@@ -1077,11 +1077,12 @@ def compute_error_estimate(field: MWField, pec_tris: list[int]) -> tuple[np.ndar
     
     Ls = mesh.edge_lengths
     
-    pec_tris = np.sort(np.unique(np.array(pec_tris)))
+    pec_tris = np.sort(np.unique(np.array(pec_tris))).astype(np.int64)
+    
     errors = []
     for key in field._fields.keys():
-        excitation = field._fields[key]
         
+        excitation = field._fields[key]
         error, sizes = compute_error_single(nodes, tets, tris, edges,
                              centers, excitation, Ls, As, 
                              tet_to_edge, tet_to_tri, tri_centers,
