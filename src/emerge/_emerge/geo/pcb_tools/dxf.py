@@ -381,7 +381,7 @@ def import_dxf(filename: str,
         for i, (xs, ys) in enumerate(to_add):
             pcb.add_poly(xs, ys, z=z, name=poly['handle']+f'_{i}')
         for i, (xs, ys) in enumerate(to_remove):
-            pcb.add_hol(xs, ys, z=z, name=poly['handle']+f'_remove_{i}')
+            pcb.add_hole(xs, ys, z=z, name=poly['handle']+f'_remove_{i}')
             
     return pcb
 
