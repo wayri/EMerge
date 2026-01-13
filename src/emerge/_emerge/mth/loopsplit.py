@@ -10,8 +10,8 @@ class Loop:
     """This class represents a 2D Polygon loop defined by its x and y coordinates.
     """
     def __init__(self, xs: np.ndarray, ys: np.ndarray):
-        self.x: np.ndarray = xs
-        self.y: np.ndarray = ys
+        self.x: np.ndarray = np.array(xs)
+        self.y: np.ndarray = np.array(ys)
         if self.x[0]==self.x[-1]:
             self.x = self.x[:-1]
             self.y = self.y[:-1]
