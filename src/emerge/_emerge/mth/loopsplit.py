@@ -66,56 +66,56 @@ class Loop:
         if sum(self.unique)==self.unique.shape[0]:
             return ([(self.x, self.y),], [])
 
-        # Extract loop sections
-        loop_sections = []
-        for unique, id_iter in groupby(np.arange(self.N), key = lambda x: self.unique[x]):
-            ids = list(id_iter)
-            if unique==0:
-                continue
-            # get all non-overlapping edge sections [1,2,3,4],[8,9,10] etc.
-            loop_sections.append([int(i) for i in ids])
         
-        # construct a connectivity dictionary
-        loops = dict()
-        keys = []
-        # For each non-overlapping polygon loop section
-        for segment_ids in loop_sections:
-            # Get the first next segment and find which nodes are the same as it
-            conn_end = [int(i+1) for i in conn.get(segment_ids[-1]+1, [])]
-            # Then store the next node ast the connected segment id + 1
-            loops[segment_ids[0]] = (segment_ids + [(segment_ids[-1]+1)%self.N,], conn_end)
-            keys.append(segment_ids[0])
+        id_loop = np.zeros_like(self.x)
+        for i, c in conn.items():
+            if len(c)!=0:
+                id_loop[i]=-1
         
-        loops_out = []
-        while keys:
-            startid = keys.pop(0)
-            loop, ce = loops[startid]
-            
-            new_id = sorted(ce)[0]
-            # stitching
-            while True:
-                if new_id==loop[0]:
-                    loops_out.append(loop)
-                    break
+        loopid = 1
+        loops = []
+        while True:
+            if np.all(id_loop != 0):
+                break
+
+            start_id = int(np.where(id_loop==0)[0][0])
+            id_loop[start_id] = loopid
+            current_loop = [start_id,]
+            pause_till = -1
+            for i in range(start_id+1, self.N):
+                if id_loop[i]>0:
+                    continue
+                if i < pause_till:
+                    continue
+                if i == pause_till:
+                    pause_till = -1
+                    continue
                 
-                connect_to, cce = loops[new_id]
-                keys.remove(new_id)
-                loop.extend(connect_to)
-                if len(cce)==0:
-                    cce = [0,]
-                
-                new_id = sorted(cce)[0]
-            
-        areas = [signed_area(self.x[loop], self.y[loop]) for loop in loops_out]
+                if len(conn[i])==0:
+                    current_loop.append(i)
+                    id_loop[i] = loopid
+                else:
+                    connected_to = conn[i]
+                    if connected_to[0] == current_loop[0]-1:
+                        current_loop.append(i)
+                        id_loop[i] = loopid
+                        break
+                    largest = connected_to[-1]
+                    current_loop.append(i)
+                    id_loop[i] = loopid
+                    pause_till = largest
+            loopid += 1
+            loops.append(current_loop)
+        
+        areas = [signed_area(self.x[loop], self.y[loop]) for loop in loops]
         np_areas = np.array(areas)
-        abs_np_areas = np.abs(np_areas)
         
         add_loops = []
         remove_loops = []
         
-        sign_biggest = np.sign(np_areas[np.argwhere(abs_np_areas==np.max(abs_np_areas))[0]])
+        sign_biggest = np.sign(np_areas[0])
         
-        for (loop, A) in zip(loops_out, areas):
+        for (loop, A) in zip(loops, areas):
             
             if np.sign(A)*sign_biggest > 0:
                 add_loops.append(loop)

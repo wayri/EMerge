@@ -1748,6 +1748,6 @@ class PCB:
         else:
             if holes:
                 holes_union = unite(*holes)
-                polys = [remove(p, holes_union) for p in polys]
+                polys = [remove(p, holes_union, remove_tool=i==(len(polys)-1)) for i, p in enumerate(polys)]
         return polys
 
