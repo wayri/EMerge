@@ -22,7 +22,7 @@ from ..geometry import GeoPolygon, GeoVolume, GeoSurface
 from emsutil import Material, AIR, PEC, COPPER
 from .shapes import Box, Plate, Cylinder, Alignment
 from .polybased import XYPolygon
-from .operations import change_coordinate_system, unite
+from .operations import change_coordinate_system, unite, remove
 from .pcb_tools.macro import parse_macro
 from .pcb_tools.calculator import PCBCalculator
 from ..logsettings import DEBUG_COLLECTOR
@@ -1073,7 +1073,8 @@ class PCB:
         
         self.paths: list[StripPath] = []
         self.polies: list[PCBPoly] = []
-
+        self.hole_polies: list[PCBPoly] = []
+        
         self.lumped_ports: list[StripLine] = []
         self.lumped_elements: list[GeoPolygon] = []
         self.trace_thickness: float | None = trace_thickness
@@ -1638,6 +1639,26 @@ class PCB:
         
         self.polies.append(poly)
     
+    def add_hole(self, 
+                 xs: list[float],
+                 ys: list[float],
+                 z: float = 0,
+                 material: Material = None,
+                 name: str | None = None) -> None:
+        """Add a custom polygon hole to the PCB
+
+        Args:
+            xs (list[float]): A list of x-coordinates
+            ys (list[float]): A list of y-coordinates
+            z (float, optional): The z-height. Defaults to 0.
+            material (Material, optional): The material. Defaults to COPPER.
+        """
+        if material is None:
+            material = self.trace_material
+        poly = PCBPoly(xs, ys, z, material, name=name)
+        
+        self.hole_polies.append(poly)
+    
     @overload
     def compile_paths(self, merge: Literal[True]) -> GeoSurface | GeoVolume: ...
     
@@ -1707,7 +1728,12 @@ class PCB:
             xs, ys = zip(*pcbpoly.xys)
             allx.extend(xs)
             ally.extend(ys)
-            
+        
+        holes = []
+        for holepoly in self.hole_polies:
+            self.zs.append(holepoly.z)
+            poly = self._gen_poly(holepoly.xys, holepoly.z, name=holepoly.name)
+            holes.append(poly)
 
         self.xs = allx
         self.ys = ally
@@ -1716,5 +1742,12 @@ class PCB:
         
         if merge:
             polys = unite(*polys)
+            if holes:
+                holes_union = unite(*holes)
+                polys = remove(polys, holes_union)
+        else:
+            if holes:
+                holes_union = unite(*holes)
+                polys = [remove(p, holes_union) for p in polys]
         return polys
 

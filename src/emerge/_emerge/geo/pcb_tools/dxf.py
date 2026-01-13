@@ -26,6 +26,7 @@ from ...cs import GCS, CoordinateSystem
 from loguru import logger
 from math import hypot
 from ...simmodel import Simulation
+from ...mth.loopsplit import Loop
 try: 
     import ezdxf
     from ezdxf.recover import readfile as recover_readfile
@@ -374,8 +375,14 @@ def import_dxf(filename: str,
         zs.append(z)
         xs = [x for x in xs]
         ys = [y for y in ys]
-        
-        pcb.add_poly(xs, ys, z=z, name=poly['handle'])
+        loop = Loop(xs, ys)
+        loop.cleanup()
+        to_add, to_remove = loop.split()
+        for i, (xs, ys) in enumerate(to_add):
+            pcb.add_poly(xs, ys, z=z, name=poly['handle']+f'_{i}')
+        for i, (xs, ys) in enumerate(to_remove):
+            pcb.add_hol(xs, ys, z=z, name=poly['handle']+f'_remove_{i}')
+            
     return pcb
 
 def _extract_polygons(nodes: np.ndarray, tris: np.ndarray, tri_ids: np.ndarray) -> list[list[tuple[float, float]]]:

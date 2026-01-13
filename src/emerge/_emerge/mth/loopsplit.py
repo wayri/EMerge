@@ -7,7 +7,7 @@ def signed_area(x: np.ndarray, y: np.ndarray) -> float:
     return 0.5 * np.sum(x * np.roll(y, -1) - y * np.roll(x, -1))
 
 class Loop:
-    """This class 
+    """This class represents a 2D Polygon loop defined by its x and y coordinates.
     """
     def __init__(self, xs: np.ndarray, ys: np.ndarray):
         self.x: np.ndarray = xs
@@ -40,7 +40,9 @@ class Loop:
             merge_margin (float, optional): The distance below which points are considered the same. Defaults to 1e-9.
 
         Returns:
-            tuple[list[tuple[list[float],list[float]]], list[tuple[list[float],list[float]]]]: _description_
+            tuple[list[tuple[list[float],list[float]]], list[tuple[list[float],list[float]]]]: A tuple containing two lists:
+                - The first list contains loops to be added, each represented as a tuple of (x_points, y_points).
+                - The second list contains loops to be removed, each represented as a tuple of (x_points, y_points).
         """
         self.cleanup()
         self.unique = np.ones_like(self.x, dtype=np.int32)

@@ -18,6 +18,7 @@ scrap/
 # Meshes
 *.msh
 
+
 # tests
 **/test_*
 
@@ -37,6 +38,7 @@ manual_scripts/
 dev/
 
 *.EMResults
+*.emff
 
 tests/
 trial_scripts/

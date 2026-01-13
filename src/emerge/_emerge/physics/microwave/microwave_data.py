@@ -776,7 +776,7 @@ class MWField:
         theta, phi = arc_on_plane(refdir, plane_normal_parsed, ang_range, Npoints)
         E,H,Ptot = self.farfield(theta, phi, faces, origin, syms = syms)
         angs = np.linspace(*ang_range, Npoints)*np.pi/180
-        return EHFieldFF(_E=E, _H=H, theta=theta, phi=phi, Ptot=Ptot, ang=angs)
+        return EHFieldFF(_E=E, _H=H, theta=theta, phi=phi, Ptot=Ptot, ang=angs, freq=self.freq)
 
     def farfield_3d(self, 
                     faces: FaceSelection | GeoSurface,
@@ -808,7 +808,7 @@ class MWField:
         E = E.reshape((3, ) + T.shape)
         H = H.reshape((3, ) + T.shape)
         
-        return EHFieldFF(E, H, T, P, Ptot)
+        return EHFieldFF(E, H, T, P, Ptot, freq=self.freq)
         
     def farfield(self, theta: np.ndarray,
                  phi: np.ndarray,

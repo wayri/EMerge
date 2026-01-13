@@ -39,7 +39,9 @@ from loguru import logger
 N_CIRC_MIN = 6
 N_CIRC_MAX = 21
 
-def _calc_via_segs(diameter: float, nsegments: int, edge_size: float | None = None) -> int:
+def _calc_via_segs(diameter: float, 
+                   nsegments: int, 
+                   edge_size: float | None = None) -> int:
     if edge_size is not None:
         N = int(np.ceil(np.pi*diameter/edge_size))
     else:
@@ -70,7 +72,23 @@ def zero_runs_indices_gb(xs: list[int], min_len=3):
 #                    POLYGON FUNCTIONS                    #
 ############################################################
 
-def semi_circ(p: tuple[float, float], u: tuple[float, float], w: float, N: int, max_seg: float | None) -> list[tuple[float, float]]:
+def semi_circ(p: tuple[float, float], 
+              u: tuple[float, float], 
+              w: float, 
+              N: int, 
+              max_seg: float | None) -> list[tuple[float, float]]:
+    """Generates a semi-circular path going counter-clockwise around the point p while pointing in the direction u.
+
+    Args:
+        p (tuple[float, float]): The center location
+        u (tuple[float, float]): The direction of the semi-circle
+        w (float): the diameter of the circle
+        N (int): The number of segments
+        max_seg (float | None): The maximum number of segments.
+
+    Returns:
+        list[tuple[float, float]]: A list of xy coordinate tuples
+    """
     N = _calc_via_segs(w, N, max_seg)
     x2, y2 = p
     ux, uy = u
@@ -99,23 +117,71 @@ def parse_region(cmd: Region2) -> list[tuple[float, float]]:
             continue
     return ring
 
-def xy_to_c(points: list[tuple, tuple]) -> list[complex]:
+def xy_to_c(points: list[tuple[float, float]]) -> list[complex]:
+    """Converts a list of xy coordinates as tuples to complex numbers.
+
+    Args:
+        points (list[tuple[float, float]]): A list of XY coordinates
+
+    Returns:
+        list[complex]: A list of complex numbers
+    """
     return [p[0]+1j*p[1] for p in points]
 
 def c_to_xy(points: list[complex]) -> list[tuple[float, float]]:
+    """Converts a list of complex numbers to xy coordinate tuples.
+    Args:
+        points (list[complex]): A list of complex numbers
+    
+    Returns:
+        list[tuple[float, float]]: A list of XY coordinate tuples
+    """
     return [(p.real, p.imag) for p in points]
 
-def dphi_cw(dr) -> tuple[float, float]:
+
+############################################################
+#                      GERBER COMMANDS                     #
+############################################################
+
+def dphi_cw(dr: tuple[float, float]) -> tuple[float, float]:
+    """Rotates a direction vector 90 degrees clockwise and normalizes.
+
+    Args:
+        dr (tuple[float, float]): The direction tuple
+
+    Returns:
+        tuple[float, float]: The rotated direction tuple.
+    """
     rx, ry = dr
     R = (rx**2 + ry**2)**0.5
     return (ry/R, -rx/R)
 
-def dphi_ccw(dr) -> tuple[float, float]:
+def dphi_ccw(dr: tuple[float, float]) -> tuple[float, float]:
+    """Rotates a direction vector 90 degrees counter-clockwise and normalizes.
+
+    Args:
+        dr (tuple[float, float]): The direction tuple
+
+    Returns:
+        tuple[float, float]: The rotated direction tuple.
+    """
     rx, ry = dr
     R = (rx**2 + ry**2)**0.5
     return (-ry/R, rx/R)
 
 def parse_arc(cmd: Arc2, ds: float, reverse: bool, Nseg: int, max_size: float | None) -> list[tuple[float, float]]:
+    """Parses an Arc2 command into a list of xy coordinate tuples.
+
+    Args:
+        cmd (Arc2): The Arc2 command
+        ds (float): _segment length
+        reverse (bool): if true, reverses start and end points
+        Nseg (int): _number of segments for semi-circles
+        max_size (float | None): max segment size for semi-circles
+
+    Returns:
+        list[tuple[float, float]]: _description_
+    """
     xc =  float(cmd.center_point.x.as_millimeters())
     yc =  float(cmd.center_point.y.as_millimeters())
     dx0 = float(cmd.get_relative_start_point().x.as_millimeters())
@@ -150,7 +216,18 @@ def parse_arc(cmd: Arc2, ds: float, reverse: bool, Nseg: int, max_size: float | 
     points = psc1+end_cap+psc2+begin_cap
     return points
 
-def parse_line(cmd: Line2, min_dist: float, ncirc:int , size_circ) -> list[tuple[float, float]]:
+def parse_line(cmd: Line2, min_dist: float, ncirc: int , size_circ: float) -> list[tuple[float, float]]:
+    """Parses a Line2 command into a list of xy coordinate tuples.
+
+    Args:
+        cmd (Line2): The Line2 command
+        min_dist (float): Minimum distance to consider line
+        ncirc (int): Number of segments for semi-circles
+        size_circ (float): Maximum segment size for semi-circles
+
+    Returns:
+        list[tuple[float, float]]: A list of xy coordinate tuples
+    """
     diam = float(cmd.aperture.diameter.as_millimeters())
     x1 = float(cmd.start_point.x.as_millimeters())
     y1 = float(cmd.start_point.y.as_millimeters())
@@ -187,6 +264,16 @@ def parse_line(cmd: Line2, min_dist: float, ncirc:int , size_circ) -> list[tuple
     return points
 
 def parse_flash_circ(cmd: Flash2, nsegments: int, segsize: float | None = None) -> list[tuple[float, float]]:
+    """Parses a circular Flash2 command into a list of xy coordinate tuples.
+
+    Args:
+        cmd (Flash2): The Flash2 command
+        nsegments (int): Number of segments
+        segsize (float | None, optional): The desired segment size. Defaults to None.
+
+    Returns:
+        list[tuple[float, float]]: A list of xy coordinate tuples
+    """
     diam = float(cmd.aperture.diameter.as_millimeters())
     x = float(cmd.flash_point.x.as_millimeters())
     y = float(cmd.flash_point.y.as_millimeters())
@@ -196,6 +283,14 @@ def parse_flash_circ(cmd: Flash2, nsegments: int, segsize: float | None = None) 
     return points
 
 def parse_flash_rect(cmd: Rectangle2) -> list[tuple[float, float]]:
+    """Parses a rectangular Flash2 command into a list of xy coordinate tuples.
+
+    Args:
+        cmd (Rectangle2): The Flash2 command
+
+    Returns:
+        list[tuple[float, float]]: A list of xy coordinate tuples
+    """
     x = float(cmd.flash_point.x.as_millimeters())
     y = float(cmd.flash_point.y.as_millimeters())
     sizeX = float(cmd.aperture.x_size.as_millimeters())

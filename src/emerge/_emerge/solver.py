@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from scipy.sparse import csr_matrix # type: ignore
 from scipy.sparse.csgraph import reverse_cuthill_mckee # type: ignore
-from scipy.sparse.linalg import bicgstab, gmres, gcrotmk, eigs, splu # type: ignore
+from scipy.sparse.linalg import bicgstab, gmres, gcrotmk, eigs, splu, factorized # type: ignore
 from scipy.linalg import eig # type: ignore
 from scipy import sparse # type: ignore
 from dataclasses import dataclass, field
@@ -110,7 +110,7 @@ class SolveReport:
     
     @property
     def mdof(self) -> float:
-        return (self.ndof**2)/((self.simtime+1e-6)*1e6)
+        return (self.ndof**2)/((self.simtime+1e-6) * 1e6)
     
     def logprint(self, print_cal: Callable | None = None):
         if print_cal is None:
@@ -564,6 +564,7 @@ class SolverSuperLU(Solver):
         self.single = True
         if not reuse_factorization:
             logger.trace(self.pre + 'Computing LU-Decomposition')
+            #self.lu = factorized(A)
             self.lu = splu(A, permc_spec='MMD_AT_PLUS_A', relax=0, diag_pivot_thresh=self._pivoting_threshold, options=self.options)
         x = self.lu.solve(b)
         aux = {
@@ -1264,7 +1265,7 @@ class SolveRoutine:
         NS = solve_ids.shape[0]
 
         A = A.tocsc()
-        
+        print(solve_ids.shape)
         Asel = A[np.ix_(solve_ids, solve_ids)]
         bsel = b[solve_ids]
         nnz = Asel.nnz
