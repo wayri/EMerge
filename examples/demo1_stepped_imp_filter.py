@@ -17,7 +17,7 @@ mil = 0.0254*mm
 L0, L1, L2, L3 = 400, 660, 660, 660 # The lengths of the sections in mil's
 W0, W1, W2, W3 = 50, 128, 8, 224 # The widths of the sections in mil's
 
-th = 62 # The PCB Thickness
+th = 62  # The PCB Thickness
 er = 2.2 # The Dielectric constant
 
 Hair = 60

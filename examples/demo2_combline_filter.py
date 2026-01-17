@@ -107,23 +107,11 @@ S21 = data.scalar.grid.model_S(2,1,fdense)
 
 plot_sp(fdense, [S11, S21], labels=['S11','S21'])
 
-# We can also plot the field inside. First we create a grid of sample point coordinates
-xs = np.linspace(0, Lbox, 41)
-ys = np.linspace(-a/2, a/2, 11)
-zs = np.linspace(0, b, 15)
-
-X, Y, Z = np.meshgrid(xs, ys, zs, indexing='ij')
-X = X.flatten()
-Y = Y.flatten()
-Z = Z.flatten()
-
 # The E-field can be interpolated by selecting a desired solution and then interpolating it.
 field = data.field.find(freq=7.25e9)
-Ex, Ey, Ez = field.interpolate(X,Y,Z).E
 
 # We can add the objects we want and fields using the shown methods.
 model.display.add_objects(*model.all_geos())
-model.display.add_quiver(X,Y,Z, Ex.real, Ey.real, Ez.real)
 model.display.add_object(feed1out, opacity=0.1)
 model.display.add_portmode(port1, 21)
 model.display.add_portmode(port2, 21)

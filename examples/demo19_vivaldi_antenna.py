@@ -152,6 +152,8 @@ abc = airbox.outside()
 # the port geometry object when you create it with the .lumped_port() function so you don't have to pass them!
 m.mw.bc.LumpedPort(port, 1, Z0=50)
 m.mw.bc.AbsorbingBoundary(abc)
+m.mesher.set_pec_face(polies)
+m.mesher.set_pec_face(ground)
 
 m.generate_mesh()
 

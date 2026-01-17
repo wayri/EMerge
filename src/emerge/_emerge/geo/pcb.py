@@ -17,9 +17,9 @@
 
 from __future__ import annotations
 
-from ..cs import CoordinateSystem, GCS, Axis
+from ..cs import CoordinateSystem, GCS, Frame, argparse_xyz, _parse_vector
 from ..geometry import GeoPolygon, GeoVolume, GeoSurface
-from emsutil import Material, AIR, PEC, COPPER
+from emsutil import Material, AIR, PEC
 from .shapes import Box, Plate, Cylinder, Alignment
 from .polybased import XYPolygon
 from .operations import change_coordinate_system, unite, remove
@@ -69,6 +69,7 @@ class _PCB_NAME_MANAGER:
                 
     
 _NAME_MANAGER = _PCB_NAME_MANAGER()
+
 ############################################################
 #                         FUNCTIONS                        #
 ############################################################
@@ -100,7 +101,6 @@ def _rot_mat(angle: float) -> np.ndarray:
 ############################################################
 
 
-
 @dataclass
 class Via:
     x: float
@@ -110,8 +110,13 @@ class Via:
     radius: float
     segments: int
 
+    @property
+    def pnt(self) -> Frame:
+        return Frame((self.x, self.y, 0))
+    
 class RouteElement:
     _DEFNAME: str = 'RouteElement'
+    
     def __init__(self):
         self.width: float = None
         self.x: float = None
@@ -122,6 +127,10 @@ class RouteElement:
         self.rcutprev: bool = False
         self.lcutnext: bool = False
         self.lcutprev: bool = False
+    
+    @property
+    def pnt(self) -> Frame:
+        return Frame((self.x, self.y, 0.0))
     
     @property
     def xy(self) -> tuple[float, float]:
@@ -149,10 +158,11 @@ class RouteElement:
 class StripLine(RouteElement):
     _DEFNAME: str = 'StripLine'
     def __init__(self,
-                 x: float,
+                 x: float | Frame,
                  y: float,
                  width: float,
                  direction: tuple[float, float]):
+        x, y, _ = argparse_xyz(x,y)
         self.x = x
         self.y = y
         self.width = width
@@ -177,7 +187,7 @@ class StripLine(RouteElement):
 class StripTurn(RouteElement):
     _DEFNAME: str = 'StripTurn'
     def __init__(self,
-                 x: float,
+                 x: float | Frame,
                  y: float,
                  width: float,
                  direction: tuple[float, float],
@@ -185,6 +195,7 @@ class StripTurn(RouteElement):
                  corner_type: str = 'round',
                  champher_distance: float | None = None,
                  dsratio: float = 1.0):
+        x, y, _ = argparse_xyz(x,y)
         self.xold: float = x
         self.yold: float = y
         self.width: float = width
@@ -306,13 +317,14 @@ class StripTurn(RouteElement):
  
 class StripCurve(StripTurn):
     def __init__(self,
-                 x: float,
+                 x: float | Frame,
                  y: float,
                  width: float,
                  direction: tuple[float, float],
                  angle: float,
                  radius: float,
                  dang: float = 10.0):
+        x, y, _ = argparse_xyz(x,y)
         self.xold: float = x
         self.yold: float = y
         self.width: float = width
@@ -390,7 +402,7 @@ class PCBPoly:
         x2 = self.xs[(index+1)%N]
         y1 = self.ys[index%N]
         y2 = self.ys[(index+1)%N]
-        z = self.z
+
         W = ((x2-x1)**2 + (y2-y1)**2)**(0.5)
         wdir = ((y2-y1)/W, -(x2-x1)/W)
         
@@ -448,12 +460,13 @@ class StripPath:
         return None
     
     def init(self, 
-             x: float, 
+             x: float | Frame, 
              y: float, 
              width: float, 
              direction: tuple[float, float],
              z: float = 0) -> StripPath:
         """ Initializes the StripPath object for routing. """
+        x, y, _ = argparse_xyz(x,y)
         self.path.append(StripLine(x, y, width, direction))
         self.z = z
         return self
@@ -464,8 +477,9 @@ class StripPath:
         self._check_loops()
         return self
     
-    def straight(self, distance: 
-                 float, width: float | None = None, 
+    def straight(self, 
+                 distance: float, 
+                 width: float | None = None, 
                  dx: float = 0, 
                  dy: float = 0) -> StripPath:
         """Add A straight section to the stripline.
@@ -693,7 +707,8 @@ class StripPath:
         paths = self.pcb.new(x,y,width, direction, z)
         return paths
     
-    def stub(self, direction: tuple[float, float],
+    def stub(self, 
+             direction: tuple[float, float],
              width: float,
              length: float, 
              mirror: bool = False) -> StripPath:
@@ -836,7 +851,8 @@ class StripPath:
             y = ending.y + dy
         return self.pcb.new(x, y, width, direction)
     
-    def to(self, dest: tuple[float, float], 
+    def to(self, 
+           dest: tuple[float, float] | Frame, 
            arrival_dir: tuple[float, float] | None = None,
            arrival_margin: float  | None= None,
            angle_step: float = 90) -> StripPath:
@@ -845,6 +861,7 @@ class StripPath:
         Optionally ensure arrival in arrival_dir after a straight segment of arrival_margin.
         Turns are quantized to multiples of angle_step (divisor of 360, <=90).
         """
+        dest = _parse_vector(dest)[:2]
         # Validate angle_step
         if 360 % angle_step != 0 or angle_step > 90 or angle_step <= 0:
             raise ValueError(f"angle_step must be a positive divisor of 360 <= 90, got {angle_step}")
@@ -1246,7 +1263,7 @@ class PCB:
             return self._zs[layer]
         return self._zs[layer-1]
 
-    def add_vias(self, *coordinates: tuple[float, float], radius: float,
+    def add_vias(self, *coordinates: tuple[float, float] | Frame, radius: float,
                  z1: float | None = None,
                  z2: float | None = None,
                  segments: int = 6) -> None:
@@ -1265,6 +1282,7 @@ class PCB:
             z2 (float | None, optional): The top z-coordinate. Defaults to None.
             segments (int, optional): The number of segmets for the via. Defaults to 6.
         """
+        coordinates = [_parse_vector(coord)[:2] for coord in coordinates]
         if z1 is None:
             z1 = self.z(0)
         if z2 is None:
@@ -1339,7 +1357,7 @@ class PCB:
               z: float,
               width: float | None = None,
               height: float | None = None,
-              origin: tuple[float, float] | None = None,
+              origin: tuple[float, float] | Frame | None = None,
               alignment: Alignment = Alignment.CORNER,
               name: str | None = None) -> GeoSurface | GeoVolume:
         """Generates a generic rectangular plate in the XY grid.
@@ -1362,8 +1380,11 @@ class PCB:
             height = self.length
             origin = (self.origin[0]*self.unit, self.origin[1]*self.unit)
         
+        origin = tuple(_parse_vector(origin))
+        print(origin)
         origin: tuple[float, ...] = origin + (z*self.unit, ) # type: ignore
 
+        print(origin)
         if alignment is Alignment.CENTER:
             origin = (origin[0] - width*self.unit/2, 
                                                         origin[1] - height*self.unit/2, 
@@ -1378,8 +1399,29 @@ class PCB:
             plane.set_material(self.trace_material)
         return plane # type: ignore
     
-    def radial_stub(self, pos: tuple[float, float], length: float, angle: float, direction: tuple[float, float], Nsections: int = 8, w0: float = 0, z: float = 0, material: Material = None, name: str = None) -> None:
-        x0, y0 = pos
+    def radial_stub(self, pos: tuple[float, float] | Frame, 
+                    length: float, 
+                    angle: float, 
+                    direction: tuple[float, float], 
+                    Nsections: int = 8, 
+                    w0: float = 0, 
+                    z: float = 0, 
+                    material: Material = None, 
+                    name: str = None) -> None:
+        """Generates a radial stub polygon
+
+        Args:
+            pos (tuple[float, float] | Point): The position of the stub origin
+            length (float): The length of the stub
+            angle (float): The angle of the stub in degrees
+            direction (tuple[float, float]): The direction vector
+            Nsections (int, optional): Number of angle sections. Defaults to 8.
+            w0 (float, optional): the start width. Defaults to 0.
+            z (float, optional): the Z-height. Defaults to 0.
+            material (Material, optional): the stub material. Defaults to None.
+            name (str, optional): The geometry name. Defaults to None.
+        """
+        x0, y0 = _parse_vector(pos)[:2]
         dx, dy = direction
         
         rx, ry = dy, -dx
@@ -1469,7 +1511,7 @@ class PCB:
         return box # type: ignore
 
     def new(self, 
-            x: float, 
+            x: float | Frame, 
             y: float, 
             width: float, 
             direction: tuple[float, float],
@@ -1534,8 +1576,8 @@ class PCB:
         tag_wire = gmsh.model.occ.addWire(ltags)
         planetag = gmsh.model.occ.addPlaneSurface([tag_wire,])
         poly = GeoPolygon([planetag,], name='name')
-        poly._aux_data['width'] = stripline.width*self.unit
-        poly._aux_data['height'] = height*self.unit
+        poly._aux_data['width'] = abs(stripline.width*self.unit)
+        poly._aux_data['height'] = abs(height*self.unit)
         poly._aux_data['vdir'] = self.cs.zax
         
         return poly

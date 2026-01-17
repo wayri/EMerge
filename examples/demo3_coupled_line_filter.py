@@ -125,6 +125,7 @@ S11_fit = data.scalar.grid.model_S(1, 1, f_fit)
 S21_fit = data.scalar.grid.model_S(2, 1, f_fit)
 plot_sp(f_fit, [S11_fit, S21_fit], labels=['S11', 'S21'])
 
+# --- 3D field visualization ------------------------------------------------
 
 field = data.field.find(freq=5.433e9)
 model.display.add_portmode(port1, k0=field.k0)

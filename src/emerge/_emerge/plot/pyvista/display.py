@@ -21,6 +21,7 @@ from ...simstate import SimState
 from ...geometry import GeoObject
 from ...selection import FaceSelection, DomainSelection, EdgeSelection, Selection, encode_data
 from ...physics.microwave.microwave_bc import PortBC, ModalPort
+from ...cs import Frame
 
 from emsutil.pyvista import EMergeDisplay, setdefault, cmap_names, _AnimObject
 import numpy as np
@@ -135,6 +136,22 @@ class PVDisplay(EMergeDisplay):
     #                        EMERGE METHODS                    #
     ############################################################
 
+    def add_frames(self, frames: list[Frame], size: float = 1.0) -> None:
+        xaxs = [f._x for f in frames]
+        yaxs = [f._y for f in frames]
+        zaxs = [f._z for f in frames]
+        c0s = [f.c0 for f in frames]
+        
+        x,y,z = zip(*c0s)
+        xx, xy, xz = zip(*xaxs)
+        yx, yy, yz = zip(*yaxs)
+        zx, zy, zz = zip(*zaxs)
+        x, y, z, xx, xy, xz, yx, yy, yz, zx, zy, zz = [np.array(_) for _ in [x,y,z,xx,xy,xz,yx,yy,yz,zx, zy, zz]]
+        self.add_quiver(x, y, z, xx, xy, xz, scale=size, color=self.set.theme.axis_x_color)
+        self.add_quiver(x, y, z, yx, yy, yz, scale=size, color=self.set.theme.axis_y_color)
+        self.add_quiver(x, y, z, zx, zy, zz, scale=size, color=self.set.theme.axis_z_color)
+        
+        
     def mesh_volume(self, volume: DomainSelection) -> pv.UnstructuredGrid:
         tets = self._mesh.get_tetrahedra(volume.tags)
         ntets = tets.shape[0]

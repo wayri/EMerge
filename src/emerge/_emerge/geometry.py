@@ -25,7 +25,7 @@ from .selection import FaceSelection, DomainSelection, EdgeSelection, PointSelec
 from loguru import logger
 from typing import Literal, Any, Iterable, Callable
 import numpy as np
-
+from .cs import Frame
 
 FaceNames = Literal['back','front','left','right','top','bottom']
 
@@ -273,6 +273,257 @@ class _FacePointer:
 _GENERATOR = _KEY_GENERATOR()
 _GEOMANAGER = _GeometryManager()
 
+class AnchorSet:
+    """ The AnchorSet class is a cartesian bounding box
+    class with a set of Frames as points plus orientations on the 
+    faces, edges and vertices of the bounding box including the center.
+    
+    Points and axes are indicated by the letters: x, y, z
+    where lower-case is used for negative axes and upper-case for positive.
+        x = -x = left
+        X = +x = right
+        y = -y = front
+        Y = +y = back
+        z = -z = bottom
+        Z = +z = top
+        
+    alternative naming convention (Rubix cube):
+        L/l = left
+        R/r = right
+        F/f = front
+        B/b = back
+        U/u = top
+        D/d = bottom
+        
+    Examples:
+        x: -x side -> Left face
+        xy: -x,-y edge -> front left edge
+        XyZ: +x,-y,+z corner -> front right top corner
+    
+    Attributes:
+        x:    The right side
+    """
+    name_map: dict[str, str] = {
+        'l': 'x',
+        'L': 'x',
+        'r': 'X',
+        'R': 'X',
+        'f': 'y',
+        'F': 'y',
+        'b': 'Y',
+        'B': 'Y',
+        'd': 'z',
+        'D': 'z',
+        'u': 'Z',
+        'U': 'Z',
+    }
+    def __init__(self) -> None:
+        
+        self.c: Frame = None
+        """ The Center point"""
+        self.x: Frame = None
+        """ The Left side"""
+        self.X: Frame = None
+        """ The Right side"""
+        self.y: Frame = None
+        """ The front side"""
+        self.Y: Frame = None
+        """The Back side"""
+        self.z: Frame = None
+        """The bottom side"""
+        self.Z: Frame = None
+        
+        """The top side"""
+        self.xy: Frame = None
+        """The front left edge"""
+        self.xY: Frame = None
+        """The back left edge"""
+        self.Xy: Frame = None
+        """The front right edge"""
+        self.XY: Frame = None
+        """The back right edge"""
+        self.xz: Frame = None
+        """The bottom left edge"""
+        self.xZ: Frame = None
+        """The top left edge"""
+        self.Xz: Frame = None
+        """The bottom right edge"""
+        self.XZ: Frame = None
+        """The top right edge"""
+        self.yz: Frame = None
+        """The front bottom edge"""
+        self.yZ: Frame = None
+        """The front top edge"""
+        self.Yz: Frame = None
+        """The back bottom edge"""
+        self.YZ: Frame = None
+        """The back top edge"""
+        """The top right edge"""
+        self.xyz: Frame = None
+        """The front bottom left corner"""
+        self.xyZ: Frame = None
+        """The front top left corner"""
+        self.xYz: Frame = None
+        """The bottom back left corner"""
+        self.Xyz: Frame = None
+        """The bottom back right corner"""
+        self.xYZ: Frame = None
+        """The back left top corner"""
+        self.XyZ: Frame = None
+        """The front right top corner"""
+        self.XYz: Frame = None
+        """The back right bottom corner"""
+        self.XYZ: Frame = None
+        """The back top right corner"""
+        self.initialized: bool = False
+        self._args: tuple[np.ndarray,...] = None
+        self._frames: list[Frame] = []
+        self.tool: dict[int, AnchorSet] = dict()
+    
+    def __call__(self, other: int | GeoObject) -> AnchorSet:
+        if isinstance(other, GeoObject):
+            key = other._key
+        return self.tool[key]
+    
+    def __getattr__(self, name: str) -> Frame:
+        for k, v in self.name_map.items():
+            name = name.replace(k, v)
+        name = "".join(sorted(name, key=str.lower))
+        if name in self.__dict__:
+            return self.__dict__[name]
+        raise AttributeError(f'AnchorSet has no attribute {name}')
+    
+    def take_as_tools(self, key: int, other: AnchorSet) -> None:
+        self.tool[key] = other
+        self.tool.update(other.tool)
+
+    def update(self, other: AnchorSet) -> None:
+        self.init(*other._args)
+        self.tool.update(other.tool)
+        
+    def copy(self) -> AnchorSet:
+        anch = AnchorSet()
+        if self._args is not None:
+            anch.init(*self._args)
+            anch.tool = {key: value.copy() for key,value in self.tool.items()}
+            anch._args = self._args
+        return anch
+    
+    def all_frames(self) -> list[Frame]:
+        frames = self._frames
+        for key, value in self.tool.items():
+            frames.extend(value._frames)
+        return frames
+    
+    def init_corners(self,
+                     xyz: np.ndarray,
+                     xYz: np.ndarray,
+                     Xyz: np.ndarray,
+                     XYz: np.ndarray,
+                     xyZ: np.ndarray,
+                     xYZ: np.ndarray,
+                     XyZ: np.ndarray,
+                     XYZ: np.ndarray,
+                     dx: np.ndarray,
+                     dy: np.ndarray,
+                     dz: np.ndarray,) -> AnchorSet:
+        
+        xy = (xyz + xyZ) / 2
+        xY = (xYz + xYZ) / 2
+        Xy = (Xyz + XyZ) / 2
+        XY = (XYz + XYZ) / 2
+        xz = (xyz + xYz) / 2
+        xZ = (xyZ + xYZ) / 2
+        Xz = (Xyz + XYz) / 2
+        XZ = (XyZ + XYZ) / 2
+        yz = (xyz + Xyz) / 2
+        yZ = (xyZ + XyZ) / 2
+        Yz = (xYz + XYz) / 2
+        YZ = (xYZ + XYZ) / 2
+        x = (xy + xY) / 2
+        X = (Xy + XY) / 2
+        y = (xy + Xy) / 2
+        Y = (xY + XY) / 2
+        z = (xz + Xz) / 2
+        Z = (xZ + XZ) / 2
+        c = (x + X) / 2
+        
+        self.x = Frame(x, dx, dy, dz)
+        self.X = Frame(X, dx, dy, dz)
+        self.y = Frame(y, dx, dy, dz)
+        self.Y = Frame(Y, dx, dy, dz)
+        self.z = Frame(z, dx, dy, dz)
+        self.Z = Frame(Z, dx, dy, dz)
+        self.c = Frame(c, dx, dy, dz)
+        self.xy = Frame(xy, dx, dy, dz)
+        self.xY = Frame(xY, dx, dy, dz)
+        self.Xy = Frame(Xy, dx, dy, dz)
+        self.XY = Frame(XY, dx, dy, dz)
+        self.xz = Frame(xz, dx, dy, dz)
+        self.xZ = Frame(xZ, dx, dy, dz)
+        self.Xz = Frame(Xz, dx, dy, dz)
+        self.XZ = Frame(XZ, dx, dy, dz)
+        self.yz = Frame(yz, dx, dy, dz)
+        self.yZ = Frame(yZ, dx, dy, dz)
+        self.Yz = Frame(Yz, dx, dy, dz)
+        self.YZ = Frame(YZ, dx, dy, dz)
+        self.xyz = Frame(xyz, dx, dy, dz)
+        self.xyZ = Frame(xyZ, dx, dy, dz)
+        self.xYz = Frame(xYz, dx, dy, dz)
+        self.Xyz = Frame(Xyz, dx, dy, dz)
+        self.xYZ = Frame(xYZ, dx, dy, dz)
+        self.XyZ = Frame(XyZ, dx, dy, dz)
+        self.XYz = Frame(XYz, dx, dy, dz)
+        self.XYZ = Frame(XYZ, dx, dy, dz)
+        
+        self._frames.append(self.c)
+        self.initialized = True
+        for cx in ('x','X',''):
+            for cy in ('y','Y',''):
+                for cz in ('z','Z',''):
+                    if cx=='' and cy=='' and cz=='':
+                        continue
+                    self._frames.append(getattr(self, f'{cx}{cy}{cz}'))
+        return self
+        
+    def init(self, p0: np.ndarray,
+                dx: np.ndarray,
+                dy: np.ndarray,
+                dz: np.ndarray) -> AnchorSet:
+        self._args = (p0, dx, dy, dz)
+        vecs = {
+            'x': -dx,
+            'X': dx,
+            'y': -dy,
+            'Y': dy,
+            'z': -dz,
+            'Z': dz,
+            '': 0.0,
+        }
+        nx = dx/np.linalg.norm(dx)
+        ny = dy/np.linalg.norm(dy)
+        if np.linalg.norm(dz) == 0:
+            nz = np.cross(nx, ny)
+            nz = dz/np.linalg.norm(nz)
+        else:
+            nz = dz/np.linalg.norm(dz)
+        
+        frame = Frame(p0, nx, ny, nz)
+        self.c = frame
+        self._frames.append(frame)
+        
+        for cx in ('x','X',''):
+            for cy in ('y','Y',''):
+                for cz in ('z','Z',''):
+                    if cx=='' and cy=='' and cz=='':
+                        continue
+                    frame = Frame((p0 + vecs[cx] + vecs[cy] + vecs[cz]), nx, ny, nz)
+                    setattr(self, f'{cx}{cy}{cz}', frame)
+                    self._frames.append(frame)
+                    
+        self.initialized: bool = False
+        return self
+    
 class GeoObject:
     """A generalization of any OpenCASCADE entity described by a dimension and a set of tags.
     """
@@ -291,7 +542,8 @@ class GeoObject:
         self._unset_constraints: bool = False
         self._embeddings: list[GeoObject] = []
         self._face_pointers: dict[str, _FacePointer] = dict()
-        self._tools: dict[int, dict[str, _FacePointer]] = dict()
+        self.anch: AnchorSet = AnchorSet()
+        self._tools: dict[int, AnchorSet] = dict()
         self._hidden: bool = False
         self._key = _GENERATOR.new()
         self._aux_data: dict[str, Any] = dict()
@@ -303,7 +555,7 @@ class GeoObject:
         self.give_name(name)
         _GEOMANAGER.submit_geometry(self)
         self._fill_face_pointers()
-        
+    
     @property
     def _priority(self) -> float:
         """The Priority of the geometry material
@@ -312,7 +564,7 @@ class GeoObject:
             float: _description_
         """
         return self._base_priority + self._sub_priority / 2
-    
+                    
     def _fill_face_pointers(self) -> None:
         """ Fills the list of all face pointers of this object
         """
@@ -468,7 +720,6 @@ class GeoObject:
             raise ValueError('Eitehr a tag or an origin + normal must be provided!')
         fp = _FacePointer(origin, normal)
         self._face_pointers[name] = fp
-        #self._replace_pointer(name, fp) <-- Will be added in later versions
         
         
     def make_copy(self) -> GeoObject:
@@ -483,6 +734,7 @@ class GeoObject:
         new_obj._embeddings = [emb.make_copy() for emb in self._embeddings]
         new_obj._face_pointers = {key: value.copy() for key,value in self._face_pointers.items()}
         new_obj._tools = {key: {key2: value2.copy() for key2, value2 in value.items()} for key,value in self._tools.items()}
+        new_obj.anch = self.anch.copy()
         
         new_obj._aux_data = self._aux_data.copy()
         new_obj._base_priority = self._base_priority
@@ -511,7 +763,12 @@ class GeoObject:
         for other in others:
             self._face_pointers.update(other._face_pointers)
             self._tools.update(other._tools)
+            self.anch.update(other.anch)
         return self
+    
+    @property
+    def _all_anchors(self) -> list[Frame]:
+        return self.anch.all_frames()
     
     @property
     def _all_pointers(self) -> list[_FacePointer]:
@@ -519,6 +776,13 @@ class GeoObject:
         for dct in self._tools.values():
             pointers.extend(list(dct.values()))
         return pointers
+    
+    @property
+    def _all_transformable(self) -> list[Frame | _FacePointer]:
+        items: list[Frame | _FacePointer] = []
+        items.extend(self._all_anchors)
+        items.extend(self._all_pointers)
+        return items
     
     @property
     def _all_pointer_names(self) -> set[str]:
@@ -531,6 +795,7 @@ class GeoObject:
         for obj in objects:
             self._tools[obj._key] = obj._face_pointers
             self._tools.update(obj._tools)
+            self.anch.take_as_tools(obj._key, obj.anch)
         return self
     
     def _face_tags(self, name: FaceNames, tool: GeoObject | None = None) -> list[int]:

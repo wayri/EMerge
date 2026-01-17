@@ -1265,8 +1265,8 @@ class SolveRoutine:
         NS = solve_ids.shape[0]
 
         A = A.tocsc()
-        print(solve_ids.shape)
-        Asel = A[np.ix_(solve_ids, solve_ids)]
+        
+        Asel = A[:, solve_ids][solve_ids,:]
         bsel = b[solve_ids]
         nnz = Asel.nnz
 

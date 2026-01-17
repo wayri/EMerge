@@ -428,14 +428,14 @@ class Simulation:
         mesh_path = self.modelpath / 'mesh.msh'
         brep_path = self.modelpath / 'model.brep'
 
-        gmsh.option.setNumber('Mesh.SaveParametric', 1)
-        gmsh.option.setNumber('Mesh.SaveAll', 1)
-        gmsh.model.geo.synchronize()
-        gmsh.model.occ.synchronize()
+        #gmsh.option.setNumber('Mesh.SaveParametric', 1)
+        #gmsh.option.setNumber('Mesh.SaveAll', 1)
+        #gmsh.model.geo.synchronize()
+        #gmsh.model.occ.synchronize()
 
-        gmsh.write(str(mesh_path))
-        gmsh.write(str(brep_path))
-        logger.info(f"Saved mesh to: {mesh_path}")
+        #gmsh.write(str(mesh_path))
+        #gmsh.write(str(brep_path))
+        #logger.info(f"Saved mesh to: {mesh_path}")
 
         # Pack and save data
         dataset = self.state.get_dataset()
@@ -461,10 +461,10 @@ class Simulation:
             raise FileNotFoundError("Missing required mesh or data file.")
 
         # Load GMSH Mesh (Ideally Id remove)
-        gmsh.open(str(brep_path))
-        gmsh.merge(str(mesh_path))
-        gmsh.model.geo.synchronize()
-        gmsh.model.occ.synchronize()
+        #gmsh.open(str(brep_path))
+        #gmsh.merge(str(mesh_path))
+        #gmsh.model.geo.synchronize()
+        #gmsh.model.occ.synchronize()
         
         logger.info(f"Loaded mesh from: {mesh_path}")
         datapack = joblib.load(str(data_path))
@@ -916,19 +916,17 @@ class Simulation:
         else:
             sim_freqs = [max_freq,]
         
-        
-        S_matrices: list[list[np.ndarray]] = []
-
-        last_n_tets: int = self.mesh.n_tets
-        logger.info(f'Initial mesh has {last_n_tets} tetrahedra')  
-        
-        passed = 0
-        
         self.state.stash()
         
-        NF = len(sim_freqs)
-        
+        S_matrices: list[list[np.ndarray]] = []
+        last_n_tets: int = self.mesh.n_tets
+        passed = 0
+        n_frequencies = len(sim_freqs)
         original_ratio = refinement_ratio
+        
+        logger.info(f'Initial mesh has {last_n_tets} tetrahedra')  
+        logger.info('Stating adaptive mesh refinement process...')
+        
         for step in range(1,max_steps+1):
             
             self.data.sim.new(iter_step=step)
@@ -937,6 +935,7 @@ class Simulation:
             fields = []
             Smats = []
             
+            logger.debug('Running frequency simulation.')
             for sf in sim_freqs:
                 data, solve_ids = self.mw._run_adaptive_mesh(step, sf)
                 datas.append(data)
@@ -953,7 +952,7 @@ class Simulation:
                 max_mag = 0
                 max_phase = 0
                 
-                for i in range(NF):
+                for i in range(n_frequencies):
                     conv_complex, conv_mag, conv_phase = compute_convergence(S0s[i], S1s[i])
                     max_complx = max(max_complx, conv_complex)
                     max_mag = max(max_mag, conv_mag)    
@@ -967,41 +966,41 @@ class Simulation:
                 else:
                     passed = 0
             
+            # Check for convergence
             if passed >= min_refined_passes and step > minimum_steps:
                 logger.info(f'Adaptive mesh refinement successfull with {self.mesh.n_tets} tetrahedra.')
                 break
             
-            errors = np.empty((self.mesh.n_tets, NF), dtype=np.float64)
-            for i in range(NF):
+            # If not converged, compute error estimates
+            errors = np.empty((self.mesh.n_tets, n_frequencies), dtype=np.float64)
+            logger.debug(f'Computing error estimates for {self.mesh.n_tets} tetrahedra.')
+            for i in range(n_frequencies):
                 error, lengths = fields[i]._solution_quality(solve_ids)
                 errors[:,i] = error
-            
-            
             error = np.max(errors, axis=1)
-                
+            
+            # Select required refinement indices
             idx = select_refinement_indices(error, error_field_inclusion_percentage/100)
+            
             idx = idx[::-1]
-            
-            npts = idx.shape[0]
-            np_percentage = npts/self.mesh.n_tets * 100
-            
+            n_refinement_points = idx.shape[0]
+            refinement_percentage = n_refinement_points/self.mesh.n_tets * 100
             original_ratio = 0.75*original_ratio + 0.25*refinement_ratio
             refinement_ratio = original_ratio
-            Ratios = []
-            Percentages = []
-            
-            
             included = np.zeros((self.mesh.n_tets, ), dtype=np.bool_)
             included[idx] = True
             
+            # Convert refinement points to refinement nodes
             coords, sizes = tet_to_node(self.mesh.nodes, self.mesh.tets, lengths, included)
-            self.mesher.add_refinement_points(coords, sizes, refinement_ratio*np.ones_like(sizes))#self.mw.mesh.centers[:,idx], lengths[idx], refinement_ratio*np.ones_like(lengths[idx]))
-                
+            self.mesher.add_refinement_points(coords, sizes, refinement_ratio*np.ones_like(sizes))
+            
+            # Remove points that don't contribute to refinement
+            logger.debug('Reducing refinement point set.')
             new_ids = reduce_point_set(self.mesher._amr_coords, growth_rate, self.mesher._amr_sizes, refinement_ratio, 0.20)
             
             nremoved = self.mesher._amr_coords.shape[1] - len(new_ids)
             
-            logger.info(f'    Pass {step}: Added {len(sizes) - nremoved} new refinement points with ratio {refinement_ratio}.')
+            logger.debug(f'    Pass {step}: Added {len(sizes) - nremoved} new refinement points with ratio {refinement_ratio}.')
             
             self.mesher._amr_coords = self.mesher._amr_coords[:,new_ids]
             self.mesher._amr_sizes = self.mesher._amr_sizes[new_ids]
@@ -1010,37 +1009,39 @@ class Simulation:
             
             logger.debug(f'    Initial refinement ratio: {refinement_ratio}')
             
-            # Mesh refinement loop. Only escapes if the mesh refined a certain set percentage.
+            Ratios = []
+            Percentages = []
             counter = 0
+            
+            # Mesh refinement loop. Only escapes if the mesh refined a certain set percentage.
             while True:
                 counter += 1
                 if counter == 10:
                     logger.warning('    More than 10 attempts at reaching the target refinement. Continuing with current.')
                     break
-                counter += 1
+                
                 self._reset_mesh()
                 self.mesher.set_refinement_function(growth_rate, 2.0)
                 self.generate_mesh(True)
                 percentage = (self.mesh.n_tets/last_n_tets - 1) * 100
                 logger.info(f'    Pass {step}: New mesh has {self.mesh.n_tets} (+{percentage:.1f}%) tetrahedra.')  
-                
                 Ratios.append(refinement_ratio)
                 Percentages.append(percentage)
                 
                 if len(Percentages) >= 2:
                     if abs(Percentages[-2]-Percentages[-1]) == 0.0:
-                        logger.warning(f'No refinement realized, decreasing refinment ratio.')
+                        logger.warning('No refinement realized, decreasing refinment ratio.')
                         refinement_ratio = refinement_ratio * 0.5
                         self.mesher.set_ratio(refinement_ratio)
                         continue
                 
                 if percentage < minimum_refinement_percentage or percentage > (minimum_refinement_percentage*2):
                     
-                    refinement_ratio = self.compute_ratio(np_percentage, Ratios, Percentages, minimum_refinement_percentage)
+                    refinement_ratio = self.compute_ratio(refinement_percentage, Ratios, Percentages, minimum_refinement_percentage)
                     logger.info(f'    Refinement target not reached! New ratio = {refinement_ratio:.3f}')
                     self.mesher.set_ratio(refinement_ratio)
                     if refinement_ratio >= 1.0:
-                        logger.warning(f'Refinement ratio pushed above 1.0... continuing with current percentage.')
+                        logger.warning('Refinement ratio pushed above 1.0... continuing with current percentage.')
                         break
                     continue
                 
@@ -1054,6 +1055,7 @@ class Simulation:
             if last_n_tets > max_tets:
                 logger.warning(f'Aborting refinement because the number of tets exceeds the maximum: {last_n_tets}>{max_tets}')
                 break
+            
         if passed < min_refined_passes:
             logger.warning('Adaptive mesh refinement did not converge!')
             
@@ -1262,6 +1264,8 @@ class SimulationBeta(Simulation):
         NF = len(sim_freqs)
         
         original_ratio = refinement_ratio
+        logger.info('Stating adaptive mesh refinement process...')
+        
         for step in range(1,max_steps+1):
             
             self.data.sim.new(iter_step=step)
@@ -1270,6 +1274,7 @@ class SimulationBeta(Simulation):
             fields = []
             Smats = []
             
+            logger.debug('Running frequency simulation.')
             for sf in sim_freqs:
                 data, solve_ids = self.mw._run_adaptive_mesh(step, sf)
                 datas.append(data)
@@ -1305,30 +1310,29 @@ class SimulationBeta(Simulation):
                 break
             
             errors = np.empty((self.mesh.n_tets, NF), dtype=np.float64)
+            logger.debug(f'Computing error estimates for {self.mesh.n_tets} tetrahedra.')
             for i in range(NF):
                 error, lengths = fields[i]._solution_quality(solve_ids)
                 errors[:,i] = error
-            
-            
             error = np.max(errors, axis=1)
-                
-            idx = select_refinement_indices(error, error_field_inclusion_percentage/100)
-            idx = idx[::-1]
             
-            npts = idx.shape[0]
-            np_percentage = npts/self.mesh.n_tets * 100
+            logger.debug('Selecting refinement indices.')
+            refine_tet_ids = select_refinement_indices(error, error_field_inclusion_percentage/100)
+            refine_tet_ids = refine_tet_ids[::-1]
             
+            n_refine_points = refine_tet_ids.shape[0]
+            rine_points_percentage = n_refine_points/self.mesh.n_tets * 100
             original_ratio = 0.75*original_ratio + 0.25*refinement_ratio
             refinement_ratio = original_ratio
+            
             Ratios = []
             Percentages = []
             
-            
             included = np.zeros((self.mesh.n_tets, ), dtype=np.bool_)
-            included[idx] = True
+            included[refine_tet_ids] = True
             
             coords, sizes = tet_to_node(self.mesh.nodes, self.mesh.tets, lengths, included)
-            self.mesher._amrobj.add_refinement_points(coords, sizes, refinement_ratio*np.ones_like(sizes))#self.mw.mesh.centers[:,idx], lengths[idx], refinement_ratio*np.ones_like(lengths[idx]))
+            self.mesher._amrobj.add_refinement_points(coords, sizes, refinement_ratio*np.ones_like(sizes))
                 
             new_ids = reduce_point_set(self.mesher._amrobj._amr_coords, growth_rate, self.mesher._amrobj._amr_sizes, refinement_ratio, 0.20)
             
@@ -1366,7 +1370,7 @@ class SimulationBeta(Simulation):
                 
                 if percentage < minimum_refinement_percentage or percentage > (minimum_refinement_percentage*2):
                     
-                    refinement_ratio = self.compute_ratio(np_percentage, Ratios, Percentages, minimum_refinement_percentage)
+                    refinement_ratio = self.compute_ratio(rine_points_percentage, Ratios, Percentages, minimum_refinement_percentage)
                     logger.info(f'    Refinement target not reached! New ratio = {refinement_ratio:.3f}')
                     self.mesher._amrobj.set_ratio(refinement_ratio)
                     if refinement_ratio >= 1.0:

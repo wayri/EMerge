@@ -1065,8 +1065,8 @@ class LumpedPort(PortBC):
         self.power: float = power
         self.Z0: float = Z0
         
-        self.width: float = width
-        self.height: float = height # type: ignore
+        self.width: float = abs(width)
+        self.height: float = abs(height) # type: ignore
         self.Vdirection: Axis = _parse_axis(direction) # type: ignore
         self.type = 'TEM'
         

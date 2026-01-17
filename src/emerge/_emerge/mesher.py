@@ -154,6 +154,7 @@ class Mesher:
         self.objects: list[GeoObject] = []
         self.size_definitions: list[tuple[int, float]] = []
         self.mesh_fields: list[int] = []
+        self.max_mesh_fields: list[int] = []
         
         self._amr_fields: list[int] = []
         self._amr_coords: np.ndarray = None
@@ -285,7 +286,7 @@ class Mesher:
         gmsh.model.mesh.field.set_number(ctag, "VIn", max_size)
         self.mesh_fields.append(ctag)
 
-    def _set_size_on_face(self, tags: list[int], max_size: float) -> None:
+    def _set_size_on_face(self, tags: list[int], max_size: float, set_max: bool = False) -> None:
         """Define the size of the mesh on a face
 
         Args:
@@ -295,7 +296,12 @@ class Mesher:
         ctag = gmsh.model.mesh.field.add("Constant")
         gmsh.model.mesh.field.set_numbers(ctag, "SurfacesList", tags)
         gmsh.model.mesh.field.set_number(ctag, "VIn", max_size)
-        self.mesh_fields.append(ctag)
+        if not set_max:
+            self.mesh_fields.append(ctag)
+        else:
+            gmsh.model.mesh.field.set_number(ctag, "IncludeBoundary", 0)
+            gmsh.model.mesh.field.set_number(ctag, "VOut", 1e-9)
+            self.max_mesh_fields.append(ctag)
         
     def _set_size_on_edge(self, tags: list[int], max_size: float) -> None:
         """Define the size of the mesh on an edge
@@ -339,12 +345,13 @@ class Mesher:
             resolution (float): The resolution
         """
         logger.debug('Starting initial mesh size computation.')
+        
         dimtags = gmsh.model.occ.get_entities(2)
-
         for dim, tag in dimtags:
-            gmsh.model.mesh.setSizeFromBoundary(2, tag, 0)
+           gmsh.model.mesh.setSizeFromBoundary(2, tag, 0)
 
         mintag = gmsh.model.mesh.field.add("Min")
+        
         size_mapping = dict()
 
         for obj in sorted(self.objects, key=lambda x: x._priority):
@@ -362,7 +369,13 @@ class Mesher:
             self._set_size_in_domain([tag,], size)
 
         gmsh.model.mesh.field.setNumbers(mintag, "FieldsList", self.mesh_fields + self._amr_fields)
-        gmsh.model.mesh.field.setAsBackgroundMesh(mintag)
+        
+        if len(self.max_mesh_fields) > 0:
+            maxtag = gmsh.model.mesh.field.add("Max")
+            gmsh.model.mesh.field.setNumbers(maxtag, "FieldsList", self.max_mesh_fields + [mintag,])
+            gmsh.model.mesh.field.setAsBackgroundMesh(maxtag)
+        else:
+            gmsh.model.mesh.field.setAsBackgroundMesh(mintag)
 
         for tag, size in self.size_definitions:
             logger.debug(f'Setting aux size definition: {1000*size:.3f}mm in domain {tag}.')
@@ -400,13 +413,21 @@ class Mesher:
     def set_refinement_function(self,
                                 gr: float = 1.5,
                                 _qf: float = 1.0):
+        """Define the refinement function based on AMR points. Not to be used by you.
+
+        Args:
+            gr (float, optional): _description_. Defaults to 1.5.
+            _qf (float, optional): _description_. Defaults to 1.0.
+
+        Returns:
+            _type_: _description_
+        """
         xs = self._amr_coords[0,:]
         ys = self._amr_coords[1,:]
         zs = self._amr_coords[2,:]
         newsize = self._amr_ratios*self._amr_sizes
         A = newsize/gr
         B = (1-gr)/gr
-        
         from numba import njit, i8, f8
         @njit(f8(i8,i8,f8,f8,f8,f8), nogil=True, fastmath=True, parallel=False)
         def func(dim, tag, x, y, z, lc):
@@ -414,8 +435,16 @@ class Mesher:
             return min(lc,  float(np.min(sizes)))
         
         gmsh.model.mesh.setSizeCallback(func)
-    
+        
     def set_ratio(self, ratio: float) -> None:
+        """Update the adaptive mesh refinement ratio. Not to be used by users.
+
+        Args:
+            ratio (float): _description_
+
+        Returns:
+            _type_: _description_
+        """
         newids = self._amr_new==1
         self._amr_ratios[newids] = ratio
         return self._amr_ratios[newids][0]
@@ -498,6 +527,25 @@ class Mesher:
         logger.debug(f'Setting size {size*1000:.3f}mm for face {obj}')
         self._set_size_on_face(obj.tags, size)
     
+    def set_pec_face(self, obj: GeoSurface | Selection, size: float = -1) -> None:
+        """Sets the size on PEC faces to be very coarse to save computational time.
+
+        Args:
+            obj (GeoSurface | Selection): The surface domain
+            size (float): The maximum size
+        """
+        if size < 0:
+            size = self.max_size
+        if obj.dim != 2:
+            logger.warning('Provided object is not a surface.')
+            if obj.dim==3:
+                logger.warning('Forwarding to set_domain_size')
+                self.set_face_size(obj, size)
+        
+        logger.debug(f'Setting PEC size {size*1000:.3f}mm for face {obj}')
+        self._set_size_on_face(obj.tags, size, True)
+    
+        
     def set_size(self, obj: GeoObject, size: float) -> None:
         """Manually set the size in or on an object
 

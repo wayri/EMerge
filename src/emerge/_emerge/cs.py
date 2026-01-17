@@ -22,16 +22,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Literal
 
-
-
-@dataclass
-class Point:
-    """ A representation of a point."""
-    x: float
-    y: float
-    z: float
-
-    
+ 
 @dataclass
 class Axis:
     """A representation of an axis.
@@ -56,9 +47,22 @@ class Axis:
         return Axis(-self.vector)
     
     @property
+    def tuple(self) -> tuple[float, float, float]:
+        return (self.x, self.y, self.z)
+    
+    @property
+    def xy(self) -> tuple[float, float]:
+        return (self.x, self.y)
+    
+    @property
     def neg(self) -> Axis:
         return Axis(-self.vector)
     
+    def __iter__(self):
+        yield self.x
+        yield self.y
+        yield self.z
+        
     def cross(self, other: Axis) -> Axis:
         """Take the cross produt with another vector
 
@@ -127,11 +131,12 @@ YAX: Axis = Axis(np.array([0, 1, 0]))
 ZAX: Axis = Axis(np.array([0, 0, 1]))
 
 
+
 ############################################################
 #                         FUNCTIONS                        #
 ############################################################
 
-def _parse_vector(vec: np.ndarray | tuple[float, float, float] | list[float] | Axis) -> np.ndarray:
+def _parse_vector(vec: np.ndarray | tuple[float, float, float] | list[float] | Axis | Frame) -> np.ndarray:
     """ Takes an array, tuple, list or Axis and alwasys returns an array."""
     if isinstance(vec, np.ndarray):
         return vec
@@ -139,6 +144,8 @@ def _parse_vector(vec: np.ndarray | tuple[float, float, float] | list[float] | A
         return np.array(vec)
     elif isinstance(vec, Axis):
         return vec.vector
+    elif isinstance(vec, Frame):
+        return vec.c0
     return np.array(vec)
 
 def _parse_axis(vec: np.ndarray | tuple[float, float, float] | list[float] | Axis) -> Axis:
@@ -159,6 +166,28 @@ def _parse_axis(vec: np.ndarray | tuple[float, float, float] | list[float] | Axi
     return Axis(np.array(vec))
 
 
+def argparse_xyz(x: float | np.ndarray | tuple[float, float, float] | list[float] | Axis | Frame,
+                 y: float | None = None,
+                 z: float | None = None) -> tuple[float, float, float]:
+    """A helper function to parse xyz arguments that can be given
+    as single arrays, tuples, lists, Axis or Point objects or as separate
+    x,y,z float values.
+    Args:
+        x (float | np.ndarray | tuple | list | Axis | Point): The x value or entire coordinate
+        y (float | None, optional): The y value. Defaults to None.
+        z (float | None, optional): The z value. Defaults to None.
+    """
+    if y is None and z is None:
+        if isinstance(x, (float, int, np.floating, np.integer)):
+            raise ValueError('If x is a single float value, y and z must also be provided.')
+        return tuple(_parse_vector(x))
+    else:
+        if y is None:
+            y = 0.0
+        if z is None:
+            z = 0.0
+        return (x, y, z)
+    
 ############################################################
 #                        PLANE CLASS                       #
 ############################################################
@@ -600,3 +629,250 @@ def cs(axes: str = 'xyz', origin: tuple[float, float, float] = (0.,0.,0.,)) -> C
     return (ax_obj[0]*ax_obj[1]*ax_obj[2]).displace(*origin)
 
 
+
+@dataclass
+class Frame:
+    """A Frame is a generalization of a coordinate plus a local 3D axis system
+    
+    Frames behave like coordinates when passed as arguments to functions
+    that require coordinates. Additionally, they can be used in the .stick()
+    method to move anchors of objects aligned with other ancors.
+    
+
+    Raises:
+        AttributeError: _description_
+        ValueError: _description_
+
+    Returns:
+        _type_: _description_
+
+    Yields:
+        _type_: _description_
+    """
+    c0: np.ndarray
+    _x: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0, 0.0]))
+    _y: np.ndarray = field(default_factory=lambda: np.array([0.0, 1.0, 0.0]))
+    _z: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.0, 1.0]))
+
+    def __post_init__(self):
+        self.c0 = np.array(self.c0)
+        self._x = np.array(self._x)
+        self._y = np.array(self._y)
+        self._z = np.array(self._z)
+    
+    def __getattr__(self, name: str) -> Frame:
+        """ A frame with the coordinate systems xyz axis oriented
+        
+        in the provided order.
+        Lower case means negative and upper-case positive.
+        Example:
+         >>> frame.yZx is the axis system (-y, +z, -x)"""
+        if len(name) != 3:
+            raise AttributeError(f'There is no attribute named: {name}')
+        axes = {
+            'x': -self._x,
+            'X': self._x,
+            'y': -self._y,
+            'Y': self._y,
+            'z': -self._z,
+            'Z': self._z
+        }
+        return Frame(self.c0, *[axes[c] for c in name])
+    
+    def __add__(self, other: Frame) -> Frame:
+        """ Adds two frames by adding their origins and keeping the axis of self.
+
+        Args:
+            other (Frame): The other frame to add
+        """
+        return Frame(self.c0 + other.c0, self._x, self._y, self._z)
+    
+    @property
+    def tx(self) -> Frame:
+        """ Same frame rotated around its positive X-axis 180 degrees"""
+        return Frame(self.c0, self._x, -self._y, -self._z)
+    
+    @property
+    def ty(self) -> Frame:
+        """ Same frame rotated around its positive Y-axis 180 degrees"""
+        return Frame(self.c0, -self._x, self._y, -self._z)
+    
+    @property
+    def tz(self) -> Frame:
+        """ Same frame rotated around its positive Z-axis 180 degrees"""
+        return Frame(self.c0, -self._x, -self._y, self._z)
+    
+    @property
+    def mx(self) -> Frame:
+        """ Same frame mirrored in its X-axis"""
+        return Frame(self.c0, -self._x, self._y, self._z)
+    
+    @property
+    def my(self) -> Frame:
+        """ Same frame mirrored in its Y-axis"""
+        return Frame(self.c0, self._x, -self._y, self._z)
+    
+    @property
+    def mz(self) -> Frame:
+        """ Same frame mirrored in its Z-axis"""
+        return Frame(self.c0, self._x, self._y, -self._z)
+    
+    def __iter__(self):
+        yield self.c0[0]
+        yield self.c0[1]
+        yield self.c0[2]
+    
+    def as_homogeneous(self) -> np.ndarray:
+        R = np.column_stack((self._x, self._y, self._z))
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[:3, 3] = self.c0
+        return T
+    
+    def cs(self) -> CoordinateSystem:
+        """ Creates a CoordinateSystem object at this frame with the given axis as Z-axis.
+
+        Args:
+            axis (tuple | np.ndarray | Axis): The Z-axis direction
+
+        Returns:
+            CoordinateSystem: The resultant CoordinateSystem object.
+        """
+        return CoordinateSystem(self._x, self._y, self._z, self.c0)
+    
+    def compute_affine(self, other: Frame) -> np.ndarray:
+        """
+        Compute affine transform mapping this frame to `other`.
+        Returns a 4x4 homogeneous transformation matrix.
+        """
+        T_self = self.as_homogeneous()
+        T_other = other.as_homogeneous()
+        print(T_self)
+        print(T_other)
+        return T_other @ np.linalg.inv(T_self)
+
+    def rotate(self, c0, ax, angle):
+        """
+        Rotate self.point and self.axis about axis `ax`, centered at `c0`, by `angle` radians.
+
+        Parameters
+        ----------
+        c0 : np.ndarray
+            The center of rotation, shape (3,).
+        ax : np.ndarray
+            The axis to rotate around, shape (3,). Need not be unit length.
+        angle : float
+            Rotation angle in radians.
+        """
+        
+        angle = -angle
+        # Ensure axis is a unit vector
+        k = ax / np.linalg.norm(ax)
+
+        # Precompute trig values
+        cos_theta = np.cos(angle)
+        sin_theta = np.sin(angle)
+
+        def rodrigues(v: np.ndarray) -> np.ndarray:
+            """
+            Rotate vector v around axis k by angle using Rodrigues' formula.
+            """
+            # term1 = v * cosθ
+            term1 = v * cos_theta
+            # term2 = (k × v) * sinθ
+            term2 = np.cross(k, v) * sin_theta
+            # term3 = k * (k ⋅ v) * (1 - cosθ)
+            term3 = k * (np.dot(k, v)) * (1 - cos_theta)
+            return term1 + term2 + term3
+
+        # Rotate the origin point about c0:
+        rel_o = self.c0 - c0            # move to rotation-centre coordinates
+        rot_o = rodrigues(rel_o)       # rotate
+        self.c0 = rot_o + c0            # move back
+
+        # Rotate the normal vector (pure direction, no translation)
+        self._x = rodrigues(self._x)
+        self._y = rodrigues(self._y)
+        self._z = rodrigues(self._z)
+
+    def translate(self, dx: float, dy: float, dz: float):
+        """_summary_
+
+        Args:
+            dx (_type_): _description_
+            dy (_type_): _description_
+            dz (_type_): _description_
+        """
+        self.c0 = self.c0 + np.array([dx, dy, dz])
+    
+    def mirror(self, c0: np.ndarray, pln: np.ndarray) -> None:
+        """
+        Reflect self.o and self.n across the plane passing through c0
+        with normal pln.
+
+        Parameters
+        ----------
+        c0 : np.ndarray
+            A point on the mirror plane, shape (3,).
+        pln : np.ndarray
+            The normal of the mirror plane, shape (3,). Need not be unit length.
+        """
+        # Normalize the plane normal
+        k = pln / np.linalg.norm(pln)
+        
+        # Reflect the origin point:
+        # compute vector from plane point to self.o
+        v_o = self.c0 - c0
+        # signed distance along normal
+        dist_o = np.dot(v_o, k)
+        # reflection
+        self.c0 = self.c0 - 2 * dist_o * k
+
+        # Reflect the normal/direction vector:
+        dist_x = np.dot(self._x, k)
+        dist_y = np.dot(self._y, k)
+        dist_z = np.dot(self._z, k)
+        self._x = (self._x - 2 * dist_x * k)
+        self._y = (self._y - 2 * dist_y * k)
+        self._z = (self.Z - 2 * dist_z * k)
+
+    def affine_transform(self, M: np.ndarray):
+        """
+        Apply a 4×4 affine transformation matrix to both self.o and self.n.
+
+        Parameters
+        ----------
+        M : np.ndarray
+            The 4×4 affine transformation matrix.
+            - When applied to a point, use homogeneous w=1.
+            - When applied to a direction/vector, use homogeneous w=0.
+        """
+        # Validate shape
+        if M.shape != (4, 4):
+            raise ValueError(f"Expected M to be 4×4, got shape {M.shape}")
+
+        # Transform origin point (homogeneous w=1)
+        homo_o = np.empty(4)
+        homo_o[:3] = self.c0
+        homo_o[3] = 1.0
+        transformed_o = M @ homo_o
+        
+        self.c0 = transformed_o[:3]
+
+        # Transform normal/direction vector (homogeneous w=0)
+        homo_x = np.empty(4)
+        homo_x[:3] = self._x
+        homo_x[3] = 0.0
+        
+        homo_y = np.empty(4)
+        homo_y[:3] = self._y
+        homo_y[3] = 0.0
+        
+        homo_z = np.empty(4)
+        homo_z[:3] = self._z
+        homo_z[3] = 0.0
+        
+        self._x = (M @ homo_x)[:3]
+        self._y = (M @ homo_y)[:3]
+        self._z = (M @ homo_z)[:3]
+        

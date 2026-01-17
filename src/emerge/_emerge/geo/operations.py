@@ -17,7 +17,7 @@
 
 from typing import TypeVar, overload
 from ..geometry import GeoSurface, GeoVolume, GeoObject, GeoPoint, GeoEdge, GeoPolygon
-from ..cs import CoordinateSystem, GCS
+from ..cs import CoordinateSystem, GCS, Frame
 import gmsh
 import numpy as np
 
@@ -176,7 +176,7 @@ def rotate(main: GeoVolume,
      
     gmsh.model.occ.rotate(rotate_obj.dimtags, *c0, *ax, -angle)
     # Rotate the facepointers
-    for fp in rotate_obj._all_pointers:
+    for fp in rotate_obj._all_transformable:
         fp.rotate(c0, ax, angle)
     return rotate_obj
 
@@ -205,9 +205,9 @@ def translate(main: GeoVolume,
     gmsh.model.occ.translate(trans_obj.dimtags, dx, dy, dz)
     
      # Rotate the facepointers
-    for fp in trans_obj._all_pointers:
+    for fp in trans_obj._all_transformable:
         fp.translate(dx, dy, dz)
-
+    
     return trans_obj
 
 def mirror(main: GeoObject,
@@ -239,8 +239,9 @@ def mirror(main: GeoObject,
         mirror_obj = main.make_copy()
     gmsh.model.occ.mirror(mirror_obj.dimtags, a,b,c,d)
     
-    for fp in mirror_obj._all_pointers:
+    for fp in mirror_obj._all_transformable:
         fp.mirror(origin, direction)
+   
     return mirror_obj
 
 def change_coordinate_system(main: GeoObject,
@@ -271,9 +272,10 @@ def change_coordinate_system(main: GeoObject,
     if not new_cs._is_global:
         gmsh.model.occ.affineTransform(main.dimtags, M2.flatten()[:12])
 
-    for fp in main._all_pointers:
+    for fp in main._all_transformable:
         fp.affine_transform(M1)
         fp.affine_transform(M2)
+        
     return main
 
 def stretch(main: GeoObject, fx: float = 1, fy: float = 1, fz: float = 1, origin: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> GeoObject:
@@ -373,3 +375,12 @@ def expand_surface(surface: GeoSurface, distance: float) -> GeoSurface:
         surfs.append(surftag)
     surf = GeoSurface(surfs)
     return surf
+
+def stick(object: GeoObject, p1: Frame , p2: Frame ) -> GeoObject:
+    affine = p1.compute_affine(p2)
+    gmsh.model.occ.affine_transform(object.dimtags, affine.flatten()[:12])
+    
+    for fp in object._all_transformable:
+        fp.affine_transform(affine)
+    
+    return object

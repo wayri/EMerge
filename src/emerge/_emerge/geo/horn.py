@@ -105,6 +105,29 @@ class Horn(GeoVolume):
         pc = p0 + dax * height/2
         self._add_face_pointer('front', pc - height/2*dax, -dax)
         self._add_face_pointer('back', pc + height/2*dax, dax)
+
+        dx1 = wax/2*w1
+        dy1 = hax/2*h1
+        dx2 = wax/2*w2
+        dy2 = hax/2*h2
+        xax = cs.xax.np
+        yax = cs.yax.np
+        zax = cs.zax.np
+        
+        self.anch.init_corners(
+            p0 - dx1 - dy1,
+            p0 - dx1 + dy1,
+            p0 + dx1 - dy1,
+            p0 + dx1 + dy1,
+            p1 - dx2 - dy2,
+            p1 - dx2 + dy2,
+            p1 + dx2 - dy2,
+            p1 + dx2 + dy2,
+            xax,
+            yax,
+            zax
+        )
+        
         
     @property
     def front(self) -> FaceSelection:

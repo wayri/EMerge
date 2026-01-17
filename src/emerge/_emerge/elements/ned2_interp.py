@@ -14,7 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, see
 # <https://www.gnu.org/licenses/>.
-from numba import njit, f8, c16, i8, types, prange # type: ignore
+from numba import njit, f8, c16, i8, types, prange, config # type: ignore
+from numba import get_thread_id as get_thread_id
+
 import numpy as np
 from ..mth.optimized import compute_distances, matmul
 
@@ -138,38 +140,46 @@ def local_mapping(vertex_ids, triangle_ids):
 
     return out
 
-@njit(types.Tuple((c16[:], c16[:], c16[:]))(f8[:,:], c16[:], i8[:,:], i8[:,:], i8[:,:], f8[:,:], i8[:,:], i8[:]), cache=True, nogil=True, parallel=False)
+@njit(i8[:](i8[:,:]), cache=True, nogil=True, parallel=True)
+def matmax(A: np.ndarray) -> np.ndarray:
+    ncols = A.shape[0]
+    out = np.zeros((ncols,), dtype=np.int64)
+    for j in prange(ncols):
+        out[j] = np.max(A[j,:])
+    return out
+
+@njit(types.Tuple((c16[:], c16[:], c16[:]))(f8[:,:], c16[:], i8[:,:], i8[:,:], i8[:,:], f8[:,:], i8[:,:], i8[:]), cache=True, nogil=True, parallel=True)
 def ned2_tet_interp(coords: np.ndarray,
-                         solutions: np.ndarray, 
-                         tets: np.ndarray, 
-                         tris: np.ndarray,
-                         edges: np.ndarray,
-                         nodes: np.ndarray,
-                         tet_to_field: np.ndarray,
-                         tetids: np.ndarray):
+                    solutions: np.ndarray, 
+                    tets: np.ndarray, 
+                    tris: np.ndarray,
+                    edges: np.ndarray,
+                    nodes: np.ndarray,
+                    tet_to_field: np.ndarray,
+                    tetids: np.ndarray):
+    
     ''' Nedelec 2 tetrahedral interpolation'''
+    Nthreads = config.NUMBA_NUM_THREADS
     # Solution has shape (nEdges, nsols)
     nNodes = coords.shape[1]
     nEdges = edges.shape[1]
-
+    nTetIds = tetids.shape[0]
+    
     xs = coords[0,:]
     ys = coords[1,:]
     zs = coords[2,:]
-
-    # Ex = np.full((nNodes, ), np.nan, dtype=np.complex128)
-    # Ey = np.full((nNodes, ), np.nan, dtype=np.complex128)
-    # Ez = np.full((nNodes, ), np.nan, dtype=np.complex128)
+    
     Ex = np.zeros((nNodes, ), dtype=np.complex128)
     Ey = np.zeros((nNodes, ), dtype=np.complex128)
     Ez = np.zeros((nNodes, ), dtype=np.complex128)
-    setnan = np.zeros((nNodes, ), dtype=np.complex128)
-    assigned = np.zeros((nNodes,), dtype=np.int64)-1
-    
-    for i_iter in range(tetids.shape[0]):
+    setnan = np.zeros((nNodes, ), dtype=np.int64)
+    assigned = np.full((nNodes,Nthreads), -1, dtype=np.int64)
+
+    for i_iter in prange(nTetIds):
         itet = tetids[i_iter]
 
         iv1, iv2, iv3, iv4 = tets[:, itet]
-
+        
         v1 = nodes[:,iv1]
         v2 = nodes[:,iv2]
         v3 = nodes[:,iv3]
@@ -198,10 +208,15 @@ def ned2_tet_interp(coords: np.ndarray,
 
         if inside.sum() == 0:
             continue
+        TID = get_thread_id()
         
-        assigned[inside] = itet
+        assigned[inside,TID] = itet
     
-    for i_iter in range(tetids.shape[0]):
+    # reduce assigned to (NTets,)by picking the first non -1 entry
+    assigned = matmax(assigned)
+    #selected = np.full((nNodes,Nthreads), -1, dtype=np.int64)
+    
+    for i_iter in prange(nTetIds):
         itet = tetids[i_iter]
         
         inside = assigned==itet
@@ -288,18 +303,33 @@ def ned2_tet_interp(coords: np.ndarray,
             Exl += ex
             Eyl += ey
             Ezl += ez
-
-        Ex[inside] += Exl
-        Ey[inside] += Eyl
-        Ez[inside] += Ezl
-        setnan[inside] += 1
+        
+        #TID = get_thread_id()
+        Ex[inside] = Exl
+        Ey[inside] = Eyl
+        Ez[inside] = Ezl
+        setnan[inside] = 1
+        #selected[inside,TID] = TID
+    
+    # sel = matmax(selected)
+    
+    # setnanf = matmax(setnan)
+    
+    # Exf = np.zeros((nNodes, ), dtype=np.complex128)
+    # Eyf = np.zeros((nNodes, ), dtype=np.complex128)
+    # Ezf = np.zeros((nNodes, ), dtype=np.complex128)
+    
+    # for i in prange(nNodes):
+    #     Exf[i] = Ex[i,sel[i]]
+    #     Eyf[i] = Ey[i,sel[i]]
+    #     Ezf[i] = Ez[i,sel[i]]
     
     Ex[setnan==0] = np.nan
     Ey[setnan==0] = np.nan
     Ez[setnan==0] = np.nan
     return Ex, Ey, Ez
 
-@njit(types.Tuple((c16[:], c16[:], c16[:]))(f8[:,:], c16[:], i8[:,:], i8[:,:], i8[:,:], f8[:,:], i8[:,:], c16[:], i8[:]), cache=True, nogil=True, parallel=False)
+@njit(types.Tuple((c16[:], c16[:], c16[:]))(f8[:,:], c16[:], i8[:,:], i8[:,:], i8[:,:], f8[:,:], i8[:,:], c16[:], i8[:]), cache=True, nogil=True, parallel=True)
 def ned2_tet_interp_curl(coords: np.ndarray,
                          solutions: np.ndarray, 
                          tets: np.ndarray, 
@@ -311,6 +341,8 @@ def ned2_tet_interp_curl(coords: np.ndarray,
                          tetids: np.ndarray):
     ''' Nedelec 2 tetrahedral interpolation of the analytic curl'''
     # Solution has shape (nEdges, nsols)
+    Nthreads = config.NUMBA_NUM_THREADS
+    
     nNodes = coords.shape[1]
     nEdges = edges.shape[1]
 
@@ -318,16 +350,13 @@ def ned2_tet_interp_curl(coords: np.ndarray,
     ys = coords[1,:]
     zs = coords[2,:]
     
-    # Ex = np.full((nNodes, ), np.nan, dtype=np.complex128)
-    # Ey = np.full((nNodes, ), np.nan, dtype=np.complex128)
-    # Ez = np.full((nNodes, ), np.nan, dtype=np.complex128)
-    Ex = np.zeros((nNodes, ), dtype=np.complex128)
-    Ey = np.zeros((nNodes, ), dtype=np.complex128)
-    Ez = np.zeros((nNodes, ), dtype=np.complex128)
-    setnan = np.zeros((nNodes, ), dtype=np.complex128)
-    assigned = np.zeros((nNodes,), dtype=np.int64)-1
+    Ex = np.zeros((nNodes, Nthreads), dtype=np.complex128)
+    Ey = np.zeros((nNodes, Nthreads), dtype=np.complex128)
+    Ez = np.zeros((nNodes, Nthreads), dtype=np.complex128)
+    setnan = np.zeros((nNodes, Nthreads), dtype=np.int64)
+    assigned = np.full((nNodes, Nthreads), -1, dtype=np.int64)
 
-    for i_iter in range(tetids.shape[0]):
+    for i_iter in prange(tetids.shape[0]):
         itet = tetids[i_iter]
         
         iv1, iv2, iv3, iv4 = tets[:, itet]
@@ -362,11 +391,13 @@ def ned2_tet_interp_curl(coords: np.ndarray,
 
         if inside.sum() == 0:
             continue
-        
-        assigned[inside] = itet
+        TID = get_thread_id()
+        assigned[inside, TID] = itet
 
-
-    for i_iter in range(tetids.shape[0]):
+    assigned = matmax(assigned)
+    selected = np.full((nNodes,Nthreads), -1, dtype=np.int64)
+    
+    for i_iter in prange(tetids.shape[0]):
         itet = tetids[i_iter] 
         
         inside = (assigned==itet)
@@ -494,16 +525,30 @@ def ned2_tet_interp_curl(coords: np.ndarray,
             Eyl += ey
             Ezl += ez
 
-        Ex[inside] += Exl*const
-        Ey[inside] += Eyl*const
-        Ez[inside] += Ezl*const
-        setnan[inside] += 1
+        TID = get_thread_id()
+        Ex[inside,TID] = Exl*const
+        Ey[inside,TID] = Eyl*const
+        Ez[inside,TID] = Ezl*const
+        setnan[inside,TID] = 1
+        selected[inside,TID] = TID
     
-    Ex[setnan==0] = np.nan
-    Ey[setnan==0] = np.nan
-    Ez[setnan==0] = np.nan
+    sel = matmax(selected)
     
-    return Ex, Ey, Ez
+    setnanf = matmax(setnan)
+    
+    Exf = np.zeros((nNodes, ), dtype=np.complex128)
+    Eyf = np.zeros((nNodes, ), dtype=np.complex128)
+    Ezf = np.zeros((nNodes, ), dtype=np.complex128)
+    
+    for i in prange(nNodes):
+        Exf[i] = Ex[i,sel[i]]
+        Eyf[i] = Ey[i,sel[i]]
+        Ezf[i] = Ez[i,sel[i]]
+        
+    Exf[setnanf==0] = np.nan
+    Eyf[setnanf==0] = np.nan
+    Ezf[setnanf==0] = np.nan
+    return Exf, Eyf, Ezf
 
 @njit(types.Tuple((c16[:], c16[:], c16[:]))(f8[:,:], c16[:], i8[:,:], f8[:,:], i8[:,:]), cache=True, nogil=True)
 def ned2_tri_interp(coords: np.ndarray,
