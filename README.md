@@ -5,21 +5,51 @@
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.17025518-blue)](https://doi.org/10.5281/zenodo.17025518)
 
 ## Introduction
+![LinkedInCover](https://github.com/user-attachments/assets/d9c194c8-eb34-49e5-96a6-9dfdfc787563)
 
-Hello everybody. Thanks for showing interest in this repository.
+Hello everybody. Thanks for showing interest in my EM FEM library!
 
-Feel free to download your version of EMerge and start playing around with it!
-If you have suggestions/changes/questions either use the Github issue system or join the Discord using the following link:
+EMerge is a python based FEM EM library for the time harmonic helmholtz formulation. It is thus best suited for
+Electromagnetic wave phenomenon. You can use it to simulate:
+ - RF Filters
+ - Signal propagation through PCBs
+ - Antennas
+ - Optycal systems
+ - Arrays and periodic structures
+ - Much more!
+
+It is designed to be as easy to use and compatible as possible. It runs on all operating systems allthough some solvers
+are a bit harder to make work on some systems than others.
+
+EMerge is designed to have your entire simulation start and finish in the same Python script (or more if you want).
+You require no awkward configuration files, JSON's, external software to do modelling etc. It allows you to do everything
+in Python:
+ * Geometry Creation/description
+ * Material assignment
+ * Meshing + mesh settings and adaptive mesh refinement
+ * Boundary condition setup
+ * Solving
+ * Post processing and visualization
+
+If you have questions, suggestions, bug reports or just want to hang out, feel free to join the discord!
 
 **[Discord Invitation](https://discord.gg/VMftDCZcNz)**
 
 ## How to install
 
 You can now install the basic version of emerge from PyPi!
+
 ```
 pip install emerge
 ```
-On MacOS and Linux you can install it with the very fast UMFPACK through scikit-umfpack
+
+## Direct solvers
+EMerge solves all systems with direct solvers only. Some are faster than others. Depending on the operating 
+system and hardware you have, some might work better and/or are easier to install than others.
+
+### MacOS (ARM)
+#### Single threaded UMFPACK
+On MacOS you can install it with the very fast UMFPACK through scikit-umfpack
 
 ```
 brew install cmake swig suite-sparse #MacOS
@@ -35,32 +65,24 @@ Finally:
 ```
 pip install emerge[umfpack]
 ```
+#### Multi threaded MUMPS
+To install the MUMPS solver on MacOS, download the installer directory from my website and follow the instructions:
 
-### Experimental
+https://www.emerge-software.com/resources
 
+### Windows (x86)
+Windows has easy access to the lightning fast PARDISO solver out of the box, no installation needed.
+If you want to install the UMFPACK solver for distributed sweeps, please follow the instructions for the UMFPACK
+installation manual on my website
+
+https://www.emerge-software.com/resources
+
+### GPU bsed CuDSS solver
 If you have a new NVidia card you can try the first test implementation of the cuDSS solver. The dependencies can be installed through:
 ```
 pip install emerge[cudss]
 ```
-The `scikit-umfpack` solver can be installed on Windows as well from binaries with conda. This is a bit more complicated and is described in the installation guide which can be downloaded from the official website: 
-
-https://www.emerge-software.com/resources
-
-## Compatibility
-
-As far as I know, the library should work on all systems. PARDISO is not supported on ARM but the current SuperLU and UMFPACK solvers work on ARM as well. Both SuperLU and UMFPACK can run on multi-processing implementations as long as you do entry-point protection:
-```
-import emerge as em
-
-def main():
-    # setup simulation
-
-    model.mw.run_sweep(True, ..., multi_processing=True)
-
-if __name__ == "__main__":
-    main()
-```
-Otherwise, the parallel solver will default to SuperLU which can be slower on larger problems with a very densely connected/compact matrix.
+*Limitations: * Cupy is currently only supporting 32 bit integer address so large EM problems cannot be correctly solved currently. This is not something I can do anything about.*
 
 ## Required libraries
 
@@ -73,9 +95,9 @@ To run this FEM library you need the following libraries
  - numba
  - matplotlib (for the matplotlib base display)
  - pyvista (for the PyVista base display)
- - cloudpickle
  - mkl (x86 devices only)
-
+ - emsutil
+ - 
 Optional:
  - scikit-umfpack
  - cudss
