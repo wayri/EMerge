@@ -377,6 +377,7 @@ def expand_surface(surface: GeoSurface, distance: float) -> GeoSurface:
     return surf
 
 def stick(object: GeoObject, p1: Frame , p2: Frame ) -> GeoObject:
+    print(p1, p2)
     affine = p1.compute_affine(p2)
     gmsh.model.occ.affine_transform(object.dimtags, affine.flatten()[:12])
     

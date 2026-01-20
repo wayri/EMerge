@@ -331,7 +331,7 @@ class Assembler:
                     def Ufunc(x,y,z): 
                         return bc.get_Uinc(x,y,z,K0)
                     
-                    if bc._include_force:
+                    if bc._include_force and bc.driven:
                         Bempty, b_p = assemble_robin_bc_excited(field, Bempty, tri_ids, Ufunc, gamma, gauss_points) # type: ignore
                         port_vectors[bc.port_number] += b_p # type: ignore
                         logger.trace(f'..included force vector term with norm {np.linalg.norm(b_p):.3f}')

@@ -1100,6 +1100,38 @@ class GeoVolume(GeoObject):
                     ctr += 1
         return self
     
+    def _set_bb_anchors(self) -> None:
+        """Sets the bounding box anchor points for the volume
+        """
+        xmins = []
+        xmaxs = []
+        ymins = []
+        ymaxs = []
+        zmins = []
+        zmaxs = []
+        for tag in self.tags:
+            x_min, y_min, z_min, x_max, y_max, z_max = gmsh.model.occ.getBoundingBox(3, tag)
+            xmins.append(x_min)
+            xmaxs.append(x_max)
+            ymins.append(y_min)
+            ymaxs.append(y_max)
+            zmins.append(z_min)
+            zmaxs.append(z_max)
+        
+        x_min = min(xmins)
+        x_max = max(xmaxs)
+        y_min = min(ymins)
+        y_max = max(ymaxs)
+        z_min = min(zmins)
+        z_max = max(zmaxs)
+        
+        print('Bounding Box:', x_min, x_max, y_min, y_max, z_min, z_max)
+        dx = np.array([1.0, 0.0, 0.0])*(x_max - x_min)/2
+        dy = np.array([0.0, 1.0, 0.0])*(y_max - y_min)/2
+        dz = np.array([0.0, 0.0, 1.0])*(z_max - z_min)/2
+        p0 = np.array([(x_max+x_min)/2, (y_max+y_min)/2, (z_max+z_min)/2])
+        self.anch.init(p0, dx, dy, dz)
+        
     def exterior_faces(self, base_object: GeoObject) -> FaceSelection:
         """Select the exterior faces of an object based on the face
         pointers of an original base object. For example

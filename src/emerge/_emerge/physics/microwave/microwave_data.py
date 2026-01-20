@@ -433,7 +433,7 @@ class MWField:
         xf = xs.flatten()
         yf = ys.flatten()
         zf = zs.flatten()
-        logger.debug(f'Interpolating {xf.shape[0]} field points')
+        logger.info(f'Interpolating {xf.shape[0]} field points')
         Ex, Ey, Ez = self.basis.interpolate(self._field, xf, yf, zf, usenan=usenan)
         logger.debug('E Interpolation complete')
         self.Ex = Ex.reshape(shp)

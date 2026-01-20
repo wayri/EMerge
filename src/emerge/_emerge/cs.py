@@ -687,6 +687,8 @@ class Frame:
         """
         return Frame(self.c0 + other.c0, self._x, self._y, self._z)
     
+    def __str__(self) -> str:
+        return f"Frame(c0={self.c0}, x={self._x}, y={self._y}, z={self._z})"
     @property
     def tx(self) -> Frame:
         """ Same frame rotated around its positive X-axis 180 degrees"""
@@ -834,7 +836,7 @@ class Frame:
         dist_z = np.dot(self._z, k)
         self._x = (self._x - 2 * dist_x * k)
         self._y = (self._y - 2 * dist_y * k)
-        self._z = (self.Z - 2 * dist_z * k)
+        self._z = (self._z - 2 * dist_z * k)
 
     def affine_transform(self, M: np.ndarray):
         """

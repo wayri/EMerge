@@ -457,7 +457,7 @@ class Simulation:
         brep_path = self.modelpath / 'model.brep'
         data_path = self.modelpath / 'simdata.emerge'
 
-        if not mesh_path.exists() or not data_path.exists():
+        if not data_path.exists():
             raise FileNotFoundError("Missing required mesh or data file.")
 
         # Load GMSH Mesh (Ideally Id remove)

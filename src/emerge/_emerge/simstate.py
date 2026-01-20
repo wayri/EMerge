@@ -174,7 +174,7 @@ class SimState:
         return self.mesh.dimtag_to_center[(dim, tag)]
     
     def getPoints(self, dimtags: list[tuple[int, int]]) -> list[np.ndarray]:
-        """Returns a
+        """Returns a list of np.array([x,y,z]) coordinates corresponding to the provided dimtags
 
         Args:
             dimtags (list[tuple[int, int]]): _description_
@@ -182,6 +182,10 @@ class SimState:
         Returns:
             list[np.ndarray]: _description_
         """
+        if not self.mesh.defined:
+            points = gmsh.model.get_boundary(dimtags, recursive=True)
+            coordinates = [gmsh.model.getValue(*p, []) for p in points]
+            return coordinates
         points = []
         id_set = []
         for dt in dimtags:

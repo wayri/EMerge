@@ -147,6 +147,5 @@ field = data.field.find(freq=1.59e9)
 ff3d = field.farfield_3d(boundary_selection, origin=(0,0,0))
 surf = ff3d.surfplot('normE', rmax=40 * mm,
                       offset=(0, 0, 20 * mm))
-
 model.display.add_surf(*surf.xyzf)
 model.display.show()

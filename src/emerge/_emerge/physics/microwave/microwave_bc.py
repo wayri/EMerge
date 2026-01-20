@@ -192,6 +192,7 @@ class PortBC(RobinBC):
         self.selected_mode: int = 0
         self.Z0: complex | float | None = None
         self.active: bool | None = False
+        self.driven: bool = True
         self.power: float = 1.0
 
     @property
@@ -310,7 +311,8 @@ class AbsorbingBoundary(RobinBC):
         self.order: int = order
         self.origin: tuple = origin
         self.cs: CoordinateSystem = GCS
-        
+        self.er: float = 1.0
+        self.ur: float = 1.0
         self.abctype: Literal['A','B','C','D','E']  = abctype
         self.o2coeffs: tuple[float, float] = {'A': (1.0, -0.5),
                                               'B': (1.00023, -0.51555),
@@ -339,9 +341,9 @@ class AbsorbingBoundary(RobinBC):
             complex: The γ-constant
         """
         if self.order==1:
-            return 1j*k0
+            return 1j*k0*np.sqrt(self.er*self.ur)
         
-        return 1j*k0*self.o2coeffs[self.abctype][0]
+        return 1j*k0*self.o2coeffs[self.abctype][0]*np.sqrt(self.er*self.ur)
     
    
 @dataclass
