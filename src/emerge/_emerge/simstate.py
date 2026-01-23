@@ -34,7 +34,21 @@ class _SimStateCollection:
         if state not in self.states:
             self.states.append(state)
         self.active = state
-            
+    
+    def sign_off(self, state: SimState) -> None:
+        if state in self.states:
+            self.states.remove(state)
+        if self.active is state:
+            self.active = None if not self.states else self.states[-1]
+        
+    def clear(self) -> None:
+        self.active = None
+        for state in self.states:
+            state.reset_data()
+        self.states.clear()
+        self.states = []
+        
+        
 _GLOBAL_SIMSTATES = _SimStateCollection()
 
 class SimState:
@@ -53,6 +67,10 @@ class SimState:
         _GLOBAL_SIMSTATES.sign_on(self)
         _CALC_INTERFACE._ifobj = self
 
+    def sign_off(self) -> None:
+        _GLOBAL_SIMSTATES.sign_off(self)
+        _CALC_INTERFACE._ifobj = None
+        
     @property
     def current_geo_state(self) -> list[GeoObject]:
         return self.manager.all_geometries()
@@ -60,6 +78,21 @@ class SimState:
     def reset_geostate(self) -> None:
         _GEOMANAGER.reset(self.modelname)
         self.clear_mesh()
+    
+    def reset_data(self) -> None:
+        """Resets the simulation dataset to an empty one.
+        """
+        self.data.clean()
+        del self.mesh
+        del self.data
+        del self._stashed
+        self.modelname: str = ''
+        self.mesh: Mesh3D = Mesh3D()
+        self.geos: list[GeoObject] = []
+        self.data: SimulationDataset = SimulationDataset()
+        self.params: dict[str, float] = dict()
+        self._stashed: SimulationDataset | None = None
+        self.manager: _GeometryManager = _GEOMANAGER
         
     def init(self) -> None:
         """Initializes the Simstate to a clean starting point.

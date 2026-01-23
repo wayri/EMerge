@@ -913,7 +913,6 @@ class Microwave3D:
         
         matassign = -1*np.ones((self.mesh.n_tets,), dtype=np.int64)
         
-        
         for volume in sorted(volumes, key=lambda x: x._priority):
         
             for dimtag in volume.dimtags:

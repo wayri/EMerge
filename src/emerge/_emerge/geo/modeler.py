@@ -217,7 +217,6 @@ class NDimContainer:
         slclist[dimindex] = number # type: ignore
         return list(self.map[tuple(slclist)].flatten())
         
-        
 class Modeler:
     
     def __init__(self):

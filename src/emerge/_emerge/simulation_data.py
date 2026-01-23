@@ -20,6 +20,7 @@ import numpy as np
 from loguru import logger
 from typing import TypeVar, Generic, Any, List, Union, Dict, Generator
 from collections import defaultdict
+from .file import Saveable
 
 T = TypeVar("T")
 M = TypeVar("M")
@@ -129,7 +130,7 @@ def generate_ndim(
     return tuple(axes) + (grid,)
 
 
-class DataEntry:
+class DataEntry(Saveable):
     
     def __init__(self, variables: dict[str, float]):
         self.vars: dict[str, float] = variables
@@ -168,7 +169,7 @@ class DataEntry:
         self.data[key] = value
 
 
-class DataContainer:
+class DataContainer(Saveable):
     """The DataContainer class is a generalized class to store data for a set of parameter sweeps"""
     def __init__(self):
         self.entries: list[DataEntry] = []
@@ -223,7 +224,9 @@ class DataContainer:
         self.last[key] = value
     
 
-class BaseDataset(Generic[T,M]):
+class BaseDataset(Generic[T,M], Saveable):
+    #skip_fields = ('_datatype','_matrixtype')
+    
     def __init__(self, datatype: type[T], matrixtype: type[M], scalar: bool):
         self._datatype: type[T] = datatype
         self._matrixtype: type[M] = matrixtype

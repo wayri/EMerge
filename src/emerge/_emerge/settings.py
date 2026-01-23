@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, see
 # <https://www.gnu.org/licenses/>.
-
+from typing import Literal
 
 class Settings:
     def __init__(self):
@@ -28,6 +28,7 @@ class Settings:
         self._size_check: bool = True
         self._auto_save: bool = False
         self._save_after_sim: bool = True
+        self._save_method: Literal['joblib','msgpack'] = 'joblib'
 
     ############################################################
     #                            GETTERS                       #

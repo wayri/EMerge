@@ -19,10 +19,10 @@ from __future__ import annotations
 import numpy as np
 from ..mesh3d import Mesh3D
 from .femdata import FEMBasis
-
+from emsutil import Saveable
 ############### Nedelec2 Class
 
-class Nedelec2(FEMBasis):
+class Nedelec2(FEMBasis, Saveable):
 
 
     def __init__(self, mesh: Mesh3D):

@@ -155,6 +155,9 @@ class Mesher:
         self.size_definitions: list[tuple[int, float]] = []
         self.mesh_fields: list[int] = []
         self.max_mesh_fields: list[int] = []
+        self.curved_boundary_segments: float = 10.0
+        
+        self._coarse_tags: list[int] = []
         
         self._amr_fields: list[int] = []
         self._amr_coords: np.ndarray = None
@@ -334,7 +337,16 @@ class Mesher:
             size = bc._size_constraint
             logger.debug(f'Setting size constraint for {bc} of size {size*1000:.2f}mm')
             self.set_face_size(bc.selection, size)
-            
+    
+    def _configure_coarse_size(self):
+        
+        tag = gmsh.model.mesh.field.add("Max")
+        maxval_tag = gmsh.model.mesh.field.add("MathEval")
+        gmsh.model.mesh.field.setString(maxval_tag, "F", "100")
+        gmsh.model.mesh.field.setNumbers(tag, "FieldsList", [maxval_tag,])
+        gmsh.model.mesh.field.setAsBackgroundMesh(tag)
+        self._coarse_tags = (tag, maxval_tag)
+        
     def _configure_mesh_size(self, discretizer: Callable, resolution: float):
         """Defines the mesh sizes based on a discretization callable.
         The discretizer must take a material and return a maximum
@@ -346,6 +358,12 @@ class Mesher:
         """
         logger.debug('Starting initial mesh size computation.')
         
+        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", self.curved_boundary_segments)
+        
+        for tag in self._coarse_tags:
+            gmsh.model.mesh.field.remove(tag)
+            self._coarse_tags = []
+        
         dimtags = gmsh.model.occ.get_entities(2)
         for dim, tag in dimtags:
            gmsh.model.mesh.setSizeFromBoundary(2, tag, 0)
@@ -353,7 +371,7 @@ class Mesher:
         mintag = gmsh.model.mesh.field.add("Min")
         
         size_mapping = dict()
-
+        
         for obj in sorted(self.objects, key=lambda x: x._priority):
             if obj._unset_constraints:
                 self.unset_constraints(obj.dimtags)
@@ -381,6 +399,18 @@ class Mesher:
             logger.debug(f'Setting aux size definition: {1000*size:.3f}mm in domain {tag}.')
             gmsh.model.mesh.setSize([tag,], size)
 
+    def _fix_curved_boundary_meshing(self) -> None:
+        '''Fix the meshing on curved boundaries by setting a finer mesh on edges'''
+        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 10)
+    
+    def set_curved_boundary_meshing(self, factor: float = 10) -> None:
+        '''Set the meshing on curved boundaries by setting a finer mesh on edges
+
+        Args:
+            factor (float, optional): The factor to reduce the mesh size on curved edges. Defaults to 10.
+        '''
+        self.curved_boundary_segments = factor
+        
     def unset_constraints(self, dimtags: list[tuple[int,int]]):
         '''Unset the mesh constraints for the given dimension tags.'''
         logger.trace(f'Unsetting mesh size constraint for domains: {dimtags}')
@@ -410,17 +440,15 @@ class Mesher:
             self._amr_new = np.hstack((0.0*self._amr_new, np.ones_like(sizes)))
         
         
-    def set_refinement_function(self,
+    def _set_refinement_function(self,
                                 gr: float = 1.5,
                                 _qf: float = 1.0):
         """Define the refinement function based on AMR points. Not to be used by you.
 
         Args:
-            gr (float, optional): _description_. Defaults to 1.5.
-            _qf (float, optional): _description_. Defaults to 1.0.
-
-        Returns:
-            _type_: _description_
+            gr (float, optional): The growth ratio . Defaults to 1.5.
+            _qf (float, optional): The growth ratio scale factor. Defaults to 1.0.
+            
         """
         xs = self._amr_coords[0,:]
         ys = self._amr_coords[1,:]
@@ -436,14 +464,12 @@ class Mesher:
         
         gmsh.model.mesh.setSizeCallback(func)
         
-    def set_ratio(self, ratio: float) -> None:
+    def _set_refinement_ratio(self, ratio: float) -> None:
         """Update the adaptive mesh refinement ratio. Not to be used by users.
 
         Args:
-            ratio (float): _description_
-
-        Returns:
-            _type_: _description_
+            ratio (float): The new refinement ratio
+            
         """
         newids = self._amr_new==1
         self._amr_ratios[newids] = ratio
@@ -456,11 +482,13 @@ class Mesher:
                           max_size: float | None = None) -> None:
         """Refine the mesh size along the boundary of a conducting surface
 
+        The growth rate determines how quickly the mesh size is allowed to increase away from the face boundary.
+        
         Args:
-            object (GeoSurface | FaceSelection): _description_
-            size (float): _description_
-            growth_rate (float, optional): _description_. Defaults to 1.1.
-            max_size (float, optional): _description_. Defaults to None.
+            boundary (GeoSurface | FaceSelection | Iterable): The boundary/surface object to refine the mesh on
+            size (float): The mesh size limit in meters
+            growth_rate (float, optional): The mesh growth rate. Defaults to 3.
+            max_size (float, optional): The maximum mesh size. Defaults to None.
         """
         if isinstance(boundary, Iterable):
             for bound in boundary:
@@ -550,8 +578,8 @@ class Mesher:
         """Manually set the size in or on an object
 
         Args:
-            obj (GeoObject): _description_
-            size (float): _description_
+            obj (GeoObject): The object to change the size for
+            size (float): The maximum mesh edge size
         """
         if obj.dim == 2:
             self._set_size_on_face(obj.tags, size)

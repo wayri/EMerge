@@ -79,9 +79,14 @@ def _merge(lst: Iterable[GeoObject | Selection]) -> Selection:
 
 class PVDisplay(EMergeDisplay):
 
+
     def __post_init__(self, state: SimState):
         self._state: SimState = state
         self._selector._set_encoder_function(encode_data)
+    
+    def clean(self) -> None:
+        del self._state
+        self._state = None
         
     def _get_edge_length(self):
         return max(1e-3, min(self._mesh.edge_lengths))

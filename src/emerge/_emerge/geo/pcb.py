@@ -53,7 +53,10 @@ class _PCB_NAME_MANAGER:
     
     def __init__(self):
         self.names: set[str] = set()
-        
+     
+    def clear(self) -> None:
+        self.names = set()
+           
     def __call__(self, name: str | None, classname: str | None = None) -> str:
         if name is None:
             return self(classname)
@@ -407,6 +410,14 @@ class PCBPoly:
         wdir = ((y2-y1)/W, -(x2-x1)/W)
         
         return StripLine((x2+x1)/2, (y1+y2)/2, W, wdir)
+    
+    @staticmethod
+    def circle(x: float, y: float, radius: float, z: float, NSegments: int = 12) -> PCBPoly:
+        angles = np.linspace(0, 2*np.pi, NSegments, endpoint=False)
+        xs = list(x + radius * np.cos(angles))
+        ys = list(y + radius * np.sin(angles))
+        return PCBPoly(xs, ys, z)
+
 ############################################################
 #                    THE STRIP PATH CLASS                  #
 ############################################################
@@ -732,6 +743,8 @@ class StripPath:
             width: float | None = None,
             extra: float | None = None,
             segments: int = 6,
+            hole_radius: float | None = None,
+            hole_skip_layers: list[int] | None = None,
             reverse: float = 0.0) -> StripPath:
         """Adds a via to the circuit
 
@@ -748,6 +761,8 @@ class StripPath:
             width (float, optional): The new width. Defaults to None.
             extra (float, optional): How much extra stripline to add around the via. Defaults to None.
             segments (int, optional): The number of via polygon sections. Defaults to 6.
+            hole_radius (float | None, optional): The via hole radius for the Ground layers and polies. Defaults to None.
+            hole_skip_layers (list[int] | None, optional): A list of layer numbers where the via hole should not be created. Defaults to None.
             reverse (float, optional): A distance to place the via back in the direction the stripline is coming from. Defaults to 0.0.
 
         Returns:
@@ -768,6 +783,11 @@ class StripPath:
             self.straight(extra)
         
         self.pcb.vias.append(Via(x,y,z1,z2,radius, segments))
+        
+        # Create via hole objects
+        if hole_radius is not None:
+            self.pcb._via_hole(x, y, hole_radius, z1, z2, hole_skip_layers)
+            
         if proceed:
             if width is None:
                 width = self.end.width
@@ -790,7 +810,7 @@ class StripPath:
             reverse (float, optional): A displacement distance in the reverse direction. Defaults to 0.
 
         Returns:
-            StripPath: _description_
+            StripPath: Returns the same strip path object.
         """
         if radius is None:
             radius = self.end.width/3
@@ -1090,7 +1110,9 @@ class PCB:
         
         self.paths: list[StripPath] = []
         self.polies: list[PCBPoly] = []
+        
         self.hole_polies: list[PCBPoly] = []
+        self.via_holes: list[PCBPoly] = []
         
         self.lumped_ports: list[StripLine] = []
         self.lumped_elements: list[GeoPolygon] = []
@@ -1119,7 +1141,7 @@ class PCB:
         self.stored_striplines: dict[str, StripLine] = dict()
         self._checkpoint: StripPath = None
 
-        self.calc: PCBCalculator = PCBCalculator(self.thickness, self._zs, self.material, self.unit)
+        self.calc: PCBCalculator = PCBCalculator(self._zs, [layer.mat for layer in self._stack], self.unit)
 
         self.name: str = _NAME_MANAGER(name, self._DEFNAME)
 
@@ -1143,9 +1165,6 @@ class PCB:
     @property
     def all_objects(self) -> list[GeoPolygon]:
         """Returns all objects gnerated by the PCB layer.
-
-        Returns:
-            list[GeoPolygon]: _description_
         """
         return self.traces + self.ports
     
@@ -1245,23 +1264,43 @@ class PCB:
             poly._store('thickness', self.trace_thickness)
         return poly
     
+    def _via_hole(self, x: float, y: float, radius: float, z1: float, z2: float, skip_layers: list[int] | None = None) -> None:
+        """Generates via holes in the ground planes and polies.
 
+        Args:
+            x (float): The x-coordinate of the via
+            y (float): The y-coordinate of the via
+            radius (float): The via hole radius
+            z1 (float): The bottom z-coordinate of the via
+            z2 (float): The top z-coordinate of the via
+            skip_layers (list[int] | None, optional): A list of layer numbers where the via hole should not be created. Defaults to None.
+        """
+        if skip_layers is None:
+            skip_layers = []
+        for layer_nr, z in enumerate(self._zs):
+            if layer_nr in skip_layers:
+                continue
+            if min(z1,z2) < z < max(z1,z2):
+                hole_poly = PCBPoly.circle(x, y, radius, z=z)
+                self.via_holes.append(hole_poly)
+                
     ############################################################
     #                        USER FUNCTIONS                   #
     ############################################################
 
     def z(self, layer: int) -> float:
-        """Returns the z-height of the given layer number counter from 1 (bottom) to N (top)
+        """Returns the z-height of the given layer number counter from 0 (bottom) to N-1 (top)
 
         Args:
-            layer (int): The layer number (1 to N)
+            layer (int): The layer number (0 to N-1)
 
         Returns:
             float: the z-height
         """
-        if layer <= 0:
-            return self._zs[layer]
-        return self._zs[layer-1]
+        if layer >= len(self._zs):
+            raise ValueError(f'Layer {layer} does not exist in PCB with {len(self._zs)} layers. Since the new version, indexing starts from 0. Perhaps you meant layer {layer-1}?')
+        logger.warning('PCB Indexing no longer counts from 1 but from 0. Please update your code accordingly.')
+        return self._zs[layer]
 
     def add_vias(self, *coordinates: tuple[float, float] | Frame, radius: float,
                  z1: float | None = None,
@@ -1371,7 +1410,7 @@ class PCB:
             alignment (['corner','center], optional): The alignment of the plate. Defaults to 'corner'.
 
         Returns:
-            GeoSurface: _description_
+            GeoSurface: The resultant GeoSurface of the plane
         """
         if width is None or height is None or origin is None:
             if self.width is None or self.length is None or self.origin is None:
@@ -1381,10 +1420,7 @@ class PCB:
             origin = (self.origin[0]*self.unit, self.origin[1]*self.unit)
         
         origin = tuple(_parse_vector(origin))
-        print(origin)
         origin: tuple[float, ...] = origin + (z*self.unit, ) # type: ignore
-
-        print(origin)
         if alignment is Alignment.CENTER:
             origin = (origin[0] - width*self.unit/2, 
                                                         origin[1] - height*self.unit/2, 
@@ -1397,6 +1433,13 @@ class PCB:
             plane._store('thickness', self.thickness)
             plane = change_coordinate_system(plane, self.cs) # type: ignore
             plane.set_material(self.trace_material)
+            
+        # subtract via holes:
+        holes = []
+        for via_hole in self.via_holes:
+            holes.append(self._gen_poly(via_hole.xys, via_hole.z, name=via_hole.name))
+        if len(holes)>0:
+            plane = remove(plane, unite(*holes))
         return plane # type: ignore
     
     def radial_stub(self, pos: tuple[float, float] | Frame, 
@@ -1543,8 +1586,25 @@ class PCB:
     def lumped_port(self, stripline: StripLine | str, z_ground: float | None = None, name: str | None = 'LumpedPort') -> GeoPolygon:
         """Generate a lumped-port object to be created.
 
+        You can flag any point during routing using list comprehensions and then pass those keys here.
+        
+        Example:
+         >>> mypcb.new(...).straight(...)['mykey']
+         >>> myport = mypcb.lumped_port('mykey')
+        
+        Lumped ports created this way automatically have auxilliary data properties set for the LumpedPort boundary condition.
+        Example:
+         >>> mymodel.mw.bc.LumpedPort(myport, port_nr) 
+        
+        No width, height or axis data is needed.
+        
         Args:
-            stripline (StripLine): _description_
+            stripline (StripLine | str): The stripline object or a reference to the stripline object
+            z_ground (float | None, optional): The ground height to extrude the port to. Defaults to None.
+            name (str | None, optional): The name for the resultant object. Defaults to 'LumpedPort'.
+
+        Returns:
+            GeoPolygon: The rectangular shaped lumped port object
         """
         
         if not isinstance(stripline, StripLine):
@@ -1772,7 +1832,7 @@ class PCB:
             ally.extend(ys)
         
         holes = []
-        for holepoly in self.hole_polies:
+        for holepoly in self.hole_polies + self.via_holes:
             self.zs.append(holepoly.z)
             poly = self._gen_poly(holepoly.xys, holepoly.z, name=holepoly.name)
             holes.append(poly)

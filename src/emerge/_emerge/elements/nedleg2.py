@@ -21,7 +21,7 @@ from ..mesh3d import SurfaceMesh
 from .femdata import FEMBasis
 from ..cs import CoordinateSystem
 from ..const import MU0, C0
-
+from emsutil import Saveable
 ## TODO: TEMPORARY SOLUTION FIX THIS
 
 class FieldFunctionClass:
@@ -101,7 +101,7 @@ class FieldFunctionClass:
 
 ############### Nedelec2 Class
 
-class NedelecLegrange2(FEMBasis):
+class NedelecLegrange2(FEMBasis, Saveable):
 
 
     def __init__(self, mesh: SurfaceMesh, cs: CoordinateSystem):

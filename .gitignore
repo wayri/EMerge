@@ -49,3 +49,4 @@ benchmarks/
 .vscode/
 .idea/
 pytest.ini
+search_globals.py

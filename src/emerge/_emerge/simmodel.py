@@ -32,6 +32,7 @@ from .settings import DEFAULT_SETTINGS, Settings
 from .solver import EMSolver, Solver
 from .simstate import SimState
 from .selection import Selector, Selection
+from .optim import Optimizer
 from typing import Literal, Generator, Any
 from loguru import logger
 import numpy as np
@@ -40,10 +41,10 @@ import os
 import inspect
 from pathlib import Path
 import joblib
-from atexit import register
+from atexit import register, _clear
 import signal
 from .. import __version__
-
+from .file import save_object, load_object
 ############################################################
 #                   EXCEPTION DEFINITIONS                  #
 ############################################################
@@ -75,7 +76,8 @@ class Simulation:
                  load_file: bool = False,
                  save_file: bool = False,
                  write_log: bool = False,
-                 path_suffix: str = ".EMResults"):
+                 path_suffix: str = ".EMResults",
+                 store_system: Literal['msgpack','joblib'] = 'joblib'):
         """Generate a Simulation class object.
 
         As a minimum a file name should be provided. Additionally you may provide it with any
@@ -101,7 +103,9 @@ class Simulation:
         self.state: SimState = SimState(self.modelname)
         self.select: Selector = Selector()
         self.settings: Settings = DEFAULT_SETTINGS
-
+        self.opt: Optimizer = Optimizer()
+        self.opt.callback = self._optim_callback
+        self.settings._save_method = store_system
         ## Display
         self.display: PVDisplay = PVDisplay(self.state)
         
@@ -134,6 +138,19 @@ class Simulation:
     #                       PRIVATE FUNCTIONS                  #
     ############################################################
 
+    def clean(self) -> None:
+        """ Cleans up the simulation object references by deleting all major components.
+        """
+        if self.state is not None:
+            self.state.sign_off()
+        self.state = None
+        if self.display:
+            self.display.clean()
+        self.mesher = None
+        self.modeler = None
+        self.mw = None
+        self.display = None
+
     @property
     def data(self) -> SimulationDataset:
         return self.state.data
@@ -142,6 +159,9 @@ class Simulation:
     def mesh(self) -> Mesh3D:
         return self.state.mesh
     
+    def __del__(self):
+        self.clean()
+        
     def __post_init__(self):
         pass
 
@@ -163,6 +183,7 @@ class Simulation:
 
     def __exit__(self, type, value, tb):
         """This method no longer does something. It only serves as backwards compatibility."""
+        self.clean()
         self._exit_gmsh()
         return False
     
@@ -214,7 +235,9 @@ class Simulation:
             self._install_signal_handlers()
 
             # Restier the Exit GMSH function on proper program abortion
+            _clear()
             register(self._autosave)
+            register(self._print_summary)
         else:
             gmsh.finalize()
             gmsh.initialize()
@@ -229,6 +252,12 @@ class Simulation:
         self.__active = True
         return self
 
+    def _print_summary(self):
+        if DEBUG_COLLECTOR.any_warnings:
+            logger.warning('EMerge simulation warnings:')
+        for i, report in DEBUG_COLLECTOR.all_reports():
+            logger.warning(f'{i}: {report}')
+            
     def _exit_gmsh(self):
         # If the simulation object state is still active (GMSH is running)
         if not self.__active:
@@ -236,10 +265,7 @@ class Simulation:
         
         logger.debug('Exiting program')
         
-        if DEBUG_COLLECTOR.any_warnings:
-            logger.warning('EMerge simulation warnings:')
-        for i, report in DEBUG_COLLECTOR.all_reports():
-            logger.warning(f'{i}: {report}')
+        self._print_summary()
         
         # Save the file first
         if self.save_file:
@@ -247,6 +273,7 @@ class Simulation:
             
         # Finalize GMSH
         if gmsh.isInitialized():
+            gmsh.clear()
             gmsh.finalize()
 
         logger.debug('GMSH Shut down successful')
@@ -425,8 +452,8 @@ class Simulation:
             logger.info(f"Created directory: {self.modelpath}")
 
         # Save mesh
-        mesh_path = self.modelpath / 'mesh.msh'
-        brep_path = self.modelpath / 'model.brep'
+        # mesh_path = self.modelpath / 'mesh.msh'
+        # brep_path = self.modelpath / 'model.brep'
 
         #gmsh.option.setNumber('Mesh.SaveParametric', 1)
         #gmsh.option.setNumber('Mesh.SaveAll', 1)
@@ -441,7 +468,10 @@ class Simulation:
         dataset = self.state.get_dataset()
         data_path = self.modelpath / 'simdata.emerge'
         
-        joblib.dump(dataset, str(data_path))
+        if self.settings._save_method == 'msgpack':
+            save_object(str(data_path), dataset)
+        else:
+            joblib.dump(dataset, str(data_path))
         
         if self._cache_run:
             cachepath = self.modelpath / 'pylines.txt'
@@ -454,7 +484,7 @@ class Simulation:
     def load(self) -> None:
         """Loads the model from the project directory."""
         mesh_path = self.modelpath / 'mesh.msh'
-        brep_path = self.modelpath / 'model.brep'
+        #brep_path = self.modelpath / 'model.brep'
         data_path = self.modelpath / 'simdata.emerge'
 
         if not data_path.exists():
@@ -467,7 +497,11 @@ class Simulation:
         #gmsh.model.occ.synchronize()
         
         logger.info(f"Loaded mesh from: {mesh_path}")
-        datapack = joblib.load(str(data_path))
+        if self.settings._save_method == 'msgpack':
+            datapack = load_object(str(data_path))
+        else:
+            datapack = joblib.load(str(data_path))
+
         self.state.load_dataset(datapack)
         self.state.activate(0)
         
@@ -512,11 +546,15 @@ class Simulation:
             bc: (bool, optional): If you wish to show boundary condition selections in the view
             bw: (bool, optional): If you want to view in black-white mode.
         """
-        if not (self.display is not None and self.mesh.defined) or use_gmsh:
+        if use_gmsh or self.display is None:
             gmsh.model.occ.synchronize()
             gmsh.fltk.run()
-            
             return
+        
+            
+        if not self.mesh.defined:
+            self.quick_mesh()
+            
         if bw:
             self.display.drawing_bw()
             
@@ -557,9 +595,19 @@ class Simulation:
             resolution (float): The resolution as a float. Lower resolution is a finer mesh 
 
         Returns:
-            Simulation: _description_
+            Simulation: The same simulation object
         """
         self.mw.set_resolution(resolution)
+        
+    
+    def _commit_quick_geometries(self) -> None:
+        """Used to temporarily submit geometries
+        """
+        logger.trace('Committing temporary geometry.')
+        self.state.store_geometry_data()
+        logger.trace(f'Parsed geometries = {self.state.geos}')
+        self.mesher.submit_objects(self.state.current_geo_state)
+        self.display._facetags = [dt[1] for dt in gmsh.model.get_entities(2)]
         
     def commit_geometry(self, *geometries: GeoObject | list[GeoObject]) -> None:
         """Finalizes and locks the current geometry state of the simulation.
@@ -568,6 +616,7 @@ class Simulation:
         
         """
         logger.trace('Committing final geometry.')
+        
         self.state.store_geometry_data()
         
         logger.trace(f'Parsed geometries = {self.state.geos}')
@@ -584,6 +633,48 @@ class Simulation:
             list[GeoObject]: A list of all GeoObjects
         """
         return self.state.current_geo_state
+    
+    def quick_mesh(self) -> None:
+        logger.info('Starting quick mesh generation phase.')
+    
+        self._commit_quick_geometries()
+        
+        logger.trace(' (1) Installing periodic boundaries in mesher.')
+        # Set the cell periodicity in GMSH
+        if self._cell is not None:
+            self.mesher.set_periodic_cell(self._cell)
+        
+        # Check if frequencies are defined: TODO: Replace with a more generic check
+        if self.mw.frequencies is None:
+            raise ValueError('No frequencies defined for the simulation. Please set frequencies before generating the mesh.')
+
+        gmsh.model.occ.synchronize()
+
+        # Set the mesh size
+        #self.mesher.set_algorithm(Algorithm3D.INITIAL_MESH_ONLY)
+        self.mesher._fix_curved_boundary_meshing()
+        self.mesher._configure_coarse_size() # This makes no sense to do this here
+        
+        logger.trace(' (2) Calling GMSH mesher')
+        try:
+            gmsh.logger.start()
+            gmsh.model.mesh.generate(3)
+            logs = gmsh.logger.get()
+            gmsh.logger.stop()
+            for log in logs:
+                logger.trace('[GMSH] ' + log)
+        except Exception:
+            logger.error('GMSH Mesh error detected.')
+            print(_GMSH_ERROR_TEXT)
+            raise
+        
+        gmsh.model.occ.synchronize()
+        
+        logger.info('GMSH Meshing complete!')
+        self.mesh._pre_update(self.mesher._get_periodic_bcs())
+        self.mesh.exterior_face_tags = self.mesher.domain_boundary_face_tags
+        self.mesh._quick_mesh = True
+        logger.trace(' (3) Mesh routine complete')
         
     def generate_mesh(self, regenerate: bool = False) -> None:
         """Generate the mesh. 
@@ -596,6 +687,11 @@ class Simulation:
             ValueError: ValueError if no frequencies are defined.
         """
         logger.info('Starting mesh generation phase.')
+        
+        if self.mesh.defined and self.mesh._quick_mesh:
+            logger.debug('Resetting quick mesh before full mesh generation.')
+            self._reset_mesh()
+            
         if not regenerate:
             
             if not self._defined_geometries:
@@ -611,7 +707,7 @@ class Simulation:
             # Check if frequencies are defined: TODO: Replace with a more generic check
             if self.mw.frequencies is None:
                 raise ValueError('No frequencies defined for the simulation. Please set frequencies before generating the mesh.')
-
+            
         gmsh.model.occ.synchronize()
 
         # Set the mesh size
@@ -647,7 +743,18 @@ class Simulation:
         gmsh.model.occ.synchronize()
         self.state.store_geometry_data()
         logger.trace(' (3) Mesh routine complete')
-        
+    
+    def _optim_callback(self):
+        self.mw.cache_matrices = False
+        if self.opt.clear_mesh and self.opt.N > 0:
+            logger.info('Cleaning up mesh.')
+            gmsh.clear()
+            self.state.reset_geostate()
+            self.mw.reset()
+        self.state.set_parameters(self.opt.params)
+        if not self.opt.clear_mesh:
+            self.state.store_geometry_data()
+    
     def parameter_sweep(self, clear_mesh: bool = True, **parameters: np.ndarray) -> Generator[tuple[float,...], None, None]:
         """Executes a parameteric sweep iteration.
 
@@ -783,7 +890,6 @@ class Simulation:
 
         Returns R_guess in (0, 1].
         """
-        #print(Rs, Ps)
         ratios = (np.asarray(ratios, dtype=float))
         percentages = (np.asarray(percentages, dtype=float))
 
@@ -1021,7 +1127,7 @@ class Simulation:
                     break
                 
                 self._reset_mesh()
-                self.mesher.set_refinement_function(growth_rate, 2.0)
+                self.mesher._set_refinement_function(growth_rate, 2.0)
                 self.generate_mesh(True)
                 percentage = (self.mesh.n_tets/last_n_tets - 1) * 100
                 logger.info(f'    Pass {step}: New mesh has {self.mesh.n_tets} (+{percentage:.1f}%) tetrahedra.')  
@@ -1032,14 +1138,14 @@ class Simulation:
                     if abs(Percentages[-2]-Percentages[-1]) == 0.0:
                         logger.warning('No refinement realized, decreasing refinment ratio.')
                         refinement_ratio = refinement_ratio * 0.5
-                        self.mesher.set_ratio(refinement_ratio)
+                        self.mesher._set_refinement_ratio(refinement_ratio)
                         continue
                 
                 if percentage < minimum_refinement_percentage or percentage > (minimum_refinement_percentage*2):
                     
                     refinement_ratio = self.compute_ratio(refinement_percentage, Ratios, Percentages, minimum_refinement_percentage)
                     logger.info(f'    Refinement target not reached! New ratio = {refinement_ratio:.3f}')
-                    self.mesher.set_ratio(refinement_ratio)
+                    self.mesher._set_refinement_ratio(refinement_ratio)
                     if refinement_ratio >= 1.0:
                         logger.warning('Refinement ratio pushed above 1.0... continuing with current percentage.')
                         break
@@ -1118,7 +1224,6 @@ class SimulationBeta(Simulation):
 
         Returns R_guess in (0, 1].
         """
-        #print(Rs, Ps)
         ratios = (np.asarray(ratios, dtype=float))
         percentages = (np.asarray(percentages, dtype=float))
 

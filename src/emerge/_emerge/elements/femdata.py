@@ -19,9 +19,9 @@ from __future__ import annotations
 from ..mesh3d import Mesh3D
 import numpy as np
 from typing import Callable
+from emsutil import Saveable
 
-
-class FEMBasis:
+class FEMBasis(Saveable):
 
     def __init__(self, mesh: Mesh3D):
         self.mesh: Mesh3D = mesh

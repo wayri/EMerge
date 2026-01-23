@@ -29,6 +29,7 @@ import platform
 import time
 from typing import Literal, Callable
 from enum import Enum
+from .file import Saveable
 
 _PARDISO_AVAILABLE = False
 _UMFPACK_AVAILABLE = False
@@ -90,7 +91,7 @@ except ImportError as e:
 ############################################################
 
 @dataclass
-class SolveReport:
+class SolveReport(Saveable):
     simtime: float = -1.0
     jobid: int = -1
     ndof: int = -1
@@ -548,6 +549,16 @@ class SolverSuperLU(Solver):
         self._pivoting_threshold: float = 0.001
         self.lu = None
     
+    def reset(self):
+        del self.lu
+        del self.A
+        del self.b
+        self.A: np.ndarray = None
+        self.b: np.ndarray = None
+        self.options: dict[str, str] = dict(SymmetricMode=True, Equil=False, IterRefine='SINGLE')
+        self._pivoting_threshold: float = 0.001
+        self.lu = None
+        
     def duplicate(self) -> Solver:
         new_solver = self.__class__(self.pre)
         new_solver._pivoting_threshold = self._pivoting_threshold
@@ -669,16 +680,10 @@ class SolverMUMPS(Solver):
         
     def reset(self) -> None:
         logger.trace(self.pre + 'Resetting MUMPS solver state')
-        #self.mumps.destroy()
+        # if self.mumps is not None:
+        #     self.mumps.destroy()
         self.fact_symb = False
     
-    # def set_options(self, pivoting_threshold: float | None = None) -> None:
-    #     self.initialize()
-    #     if pivoting_threshold is not None:
-    #         self.umfpack.control[um.UMFPACK_PIVOT_TOLERANCE] = pivoting_threshold # ty: ignore
-    #         self.umfpack.control[um.UMFPACK_SYM_PIVOT_TOLERANCE] = pivoting_threshold # ty: ignore
-    #         self._pivoting_threshold = pivoting_threshold
-
     def duplicate(self) -> Solver:
         new_solver = self.__class__(self.pre)
         return new_solver
@@ -1146,7 +1151,7 @@ class SolveRoutine:
             if isinstance(solver, Solver):
                 solver.set_options(pivoting_threshold=pivoting_threshold)
         
-    def reset(self, reset_solver_preference: bool = False) -> None:
+    def reset(self, reset_solver_preference: bool = False, hard: bool = False) -> None:
         """Reset all solver states"""
         for solver in self.solvers.values():
             solver.reset()
@@ -1156,6 +1161,10 @@ class SolveRoutine:
         if reset_solver_preference:
             self.forced_solver = []
             self.disabled_solver = []
+        if hard:
+            self.solvers: dict[EMSolver, Solver | EigSolver] = {slv: slv.create_solver(self.pre) for slv in EMSolver}
+            self.solvers = {key: solver for key, solver in self.solvers.items() if solver is not None}
+
 
     def _get_solver(self, A: csr_matrix, b: np.ndarray) -> Solver:
         """Returns the relevant Solver object given a certain matrix and source vector

@@ -21,10 +21,10 @@ from __future__ import annotations
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Literal
-
+from emsutil import Saveable
  
 @dataclass
-class Axis:
+class Axis(Saveable):
     """A representation of an axis.
     An Axis object always has length 1 and points in some 3D direction.
     By default XAX, YAX, and ZAX are constructed and defined in the global namespace of the
@@ -36,7 +36,7 @@ class Axis:
         return f"Axis({self.vector})"
     
     def __post_init__(self):
-
+        self.vector = np.array(self.vector)
         self.vector = self.vector/np.linalg.norm(self.vector)
         self.np: np.ndarray = self.vector
         self.x: float = self.vector[0]
@@ -100,7 +100,7 @@ class Axis:
         """The multiply binary operator
 
         Args:
-            other (Axis): _description_
+            other (Axis): The multiplied Axis object
 
         Returns:
             Plane: The output plane
@@ -193,7 +193,7 @@ def argparse_xyz(x: float | np.ndarray | tuple[float, float, float] | list[float
 ############################################################
 
 @dataclass
-class Plane:
+class Plane(Saveable):
     """A generalization of any plane of inifinite size spanned by two Axis objects.
 
     """
@@ -321,7 +321,7 @@ ZYPLANE = Plane(ZAX, YAX)
 
 
 @dataclass
-class CoordinateSystem:
+class CoordinateSystem(Saveable):
     """A class representing CoordinateSystem information.
 
     This class is widely used throughout the FEM solver to embed objects in space properly.
@@ -631,23 +631,13 @@ def cs(axes: str = 'xyz', origin: tuple[float, float, float] = (0.,0.,0.,)) -> C
 
 
 @dataclass
-class Frame:
+class Frame(Saveable):
     """A Frame is a generalization of a coordinate plus a local 3D axis system
     
     Frames behave like coordinates when passed as arguments to functions
     that require coordinates. Additionally, they can be used in the .stick()
     method to move anchors of objects aligned with other ancors.
     
-
-    Raises:
-        AttributeError: _description_
-        ValueError: _description_
-
-    Returns:
-        _type_: _description_
-
-    Yields:
-        _type_: _description_
     """
     c0: np.ndarray
     _x: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0, 0.0]))
@@ -801,9 +791,9 @@ class Frame:
         """_summary_
 
         Args:
-            dx (_type_): _description_
-            dy (_type_): _description_
-            dz (_type_): _description_
+            dx (float): The translation x - displacement
+            dy (float): The translation y - displacement
+            dz (float): The translation z - displacement
         """
         self.c0 = self.c0 + np.array([dx, dy, dz])
     
