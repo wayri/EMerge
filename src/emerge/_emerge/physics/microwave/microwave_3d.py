@@ -37,7 +37,7 @@ from .simjob import SimJob
 
 from concurrent.futures import ThreadPoolExecutor
 from loguru import logger
-from typing import Callable, Literal, Any
+from typing import Callable, Literal, Any, Generator
 import multiprocessing as mp
 from cmath import sqrt as csqrt
 from itertools import product
@@ -329,7 +329,7 @@ class Microwave3D:
         """ Executes a physics check before a simulation can be run."""
         if not self.bc._is_excited():
             raise SimulationError('The simulation has no boundary conditions that insert energy. Make sure to include at least one Port into your simulation.')
-    
+            
     def define_lumped_port_integration_points(self, port: LumpedPort) -> None:
         """Sets the integration points on Lumped Port objects for voltage integration
 
@@ -471,6 +471,8 @@ class Microwave3D:
                 TEM = False
             self.modal_analysis(bc, 1, direct=False, freq=freq, TEM=TEM)
 
+            bc._check_mode_betas()
+        
     def modal_analysis(self, 
                        port: ModalPort, 
                        nmodes: int = 6, 
@@ -605,7 +607,7 @@ class Microwave3D:
             portfH = nlf.interpolate_Hf(Emode, k0, ur, beta)
             P = compute_avg_power_flux(nlf, Emode, k0, ur, beta)
 
-            mode = port.add_mode(Emode, portfE, portfH, beta, k0, residuals, number=i, freq=freq)
+            mode = port.add_mode(Emode, portfE, portfH, beta, k0, residuals, freq=freq)
             
             if mode is None:
                 continue
@@ -1121,8 +1123,8 @@ class Microwave3D:
             raise SimulationError('Cannot post-process. Simulation basis function is undefined.')
         
         mesh = self.mesh
-        all_ports = self.bc.oftype(PortBC)
-        port_numbers = [port.port_number for port in all_ports]
+        #all_ports = self.bc.oftype(PortBC)
+        matrix_indices = [smati for port, smati, modenr in self.bc.iter_port_modes()]
         
         logger.info('Computing S-parameters')
         
@@ -1155,7 +1157,7 @@ class Microwave3D:
             scalardata = self.data.scalar.new(freq=freq, **self._params)
             scalardata.k0 = k0
             scalardata.freq = freq
-            scalardata.init_sp(port_numbers) # type: ignore
+            scalardata.init_sp(matrix_indices) # type: ignore
             
             fielddata = self.data.field.new(freq=freq, **self._params)
             fielddata.freq = freq
@@ -1166,7 +1168,7 @@ class Microwave3D:
             logger.info(f'Post Processing simulation frequency = {freq/1e9:.3f} GHz') 
 
             # Recording port information
-            for active_port in all_ports:
+            for active_port, smat_index_j, mode_nr_j in self.bc.iter_port_modes():
                 
                 if not active_port.driven:
                     continue
@@ -1174,22 +1176,22 @@ class Microwave3D:
                 port_tets = self.mesh.get_face_tets(active_port.tags)
                 
                 fielddata.add_port_properties(active_port.port_number,
-                                         mode_number=active_port.mode_number,
+                                         mode_number=mode_nr_j,
+                                         smat_index=smat_index_j,
                                          k0 = k0,
                                          beta = active_port.get_beta(k0),
                                          Z0 = active_port.portZ0(k0),
                                          Pout = active_port.power)
+                
                 scalardata.add_port_properties(active_port.port_number,
-                                         mode_number=active_port.mode_number,
+                                         mode_number=mode_nr_j,
+                                         smat_index=smat_index_j,
                                          k0 = k0,
                                          beta = active_port.get_beta(k0),
                                          Z0 = active_port.portZ0(k0),
                                          Pout= active_port.power)
-
-                # Set port as active and add the port mode to the forcing vector
-                active_port.active = True
                 
-                solution = job._fields[active_port.port_number]
+                solution = job._fields[smat_index_j]
 
                 fielddata._fields = job._fields
                 fielddata.basis = self.basis
@@ -1200,22 +1202,28 @@ class Microwave3D:
                 # Active port power
                 tris = mesh.get_triangles(active_port.tags)
                 tri_vertices = mesh.tris[:,tris]
-                EdotF_act, EdotE_act = self._compute_s_data(active_port, fieldf, tri_vertices, k0, ertri[:,:,tris], urtri[:,:,tris])
-                logger.debug(f'[{active_port.port_number}] Active port amplitude = {np.abs(EdotF_act):.3f} (Excitation = {np.abs(EdotE_act):.2f})')
+                EdotF_act, EdotE_act = self._compute_s_data(active_port, mode_nr_j, True, fieldf, tri_vertices, k0, ertri[:,:,tris], urtri[:,:,tris])
+                logger.debug(f'[{smat_index_j}] Active port amplitude = {np.abs(EdotF_act):.3f} (Excitation = {np.abs(EdotE_act):.2f})')
                 Amp_act = np.sqrt(active_port.power)
                 
                 #Passive ports
-                for bc in all_ports:
-                    port_tets = self.mesh.get_face_tets(bc.tags)
+                for passive_port, smat_index_i, mode_nr_i in self.bc.iter_port_modes():
+                    if smat_index_i==smat_index_j:
+                        active=True
+                    else:
+                        active=False
+                        
+                    port_tets = self.mesh.get_face_tets(passive_port.tags)
                     fieldf = self.basis.interpolate_Ef(solution, tetids=port_tets)
-                    tris = mesh.get_triangles(bc.tags)
+                    tris = mesh.get_triangles(passive_port.tags)
                     tri_vertices = mesh.tris[:,tris]
-                    EdotF_pas, EdotE_pas = self._compute_s_data(bc, fieldf,tri_vertices, k0, ertri[:,:,tris], urtri[:,:,tris])
+                    EdotF_pas, EdotE_pas = self._compute_s_data(passive_port, mode_nr_i, active, fieldf, tri_vertices, k0, ertri[:,:,tris], urtri[:,:,tris])
                     Amp_pas = EdotF_pas/EdotE_pas
-                    logger.debug(f'[{bc.port_number}] Passive amplitude = {np.abs(EdotF_pas):.3f}')
-                    scalardata.write_S(bc.port_number, active_port.port_number, Amp_pas/Amp_act)
+                    logger.debug(f'[{smat_index_i}] Passive amplitude = {np.abs(EdotF_pas):.3f}')
+                    
+                    scalardata.write_S(smat_index_i, smat_index_j, Amp_pas/Amp_act)
                     if abs(Amp_pas/Amp_act) > 1.0:
-                        logger.warning(f'S-parameter ({bc.port_number},{active_port.port_number}) > 1.0 detected: {np.abs(Amp_pas/Amp_act)}')
+                        logger.warning(f'S-parameter ({smat_index_i},{smat_index_j}) > 1.0 detected: {np.abs(Amp_pas/Amp_act)}')
                         not_conserved = True
                         conserve_margin = abs(Amp_pas/Amp_act) - 1.0
                 active_port.active=False
@@ -1252,12 +1260,15 @@ class Microwave3D:
         logger.info(f'Elapsed time = {(self._simend-self._simstart):.2f} seconds.')
 
     
-    def _compute_s_data(self, bc: PortBC, 
-                       fieldfunction: Callable, 
-                       tri_vertices: np.ndarray, 
-                       k0: float,
-                       erp: np.ndarray,
-                       urp: np.ndarray,) -> tuple[complex, complex]:
+    def _compute_s_data(self, 
+                        bc: PortBC, 
+                        mode_nr: int,
+                        active: bool,
+                        fieldfunction: Callable, 
+                        tri_vertices: np.ndarray, 
+                        k0: float,
+                        erp: np.ndarray,
+                        urp: np.ndarray,) -> tuple[complex, complex]:
         """ Computes the S-parameter data for a given boundary condition and field function.
 
         Args:
@@ -1282,7 +1293,7 @@ class Microwave3D:
             Voltages = [line.line_integral(fieldfunction) for line in bc.vintline]
             V = sum(Voltages)/len(Voltages)
             
-            if bc.active:
+            if active:
                 if bc.voltage is None:
                     raise ValueError('Cannot compute port S-paramer with a None port voltage.')
                 a = bc.voltage
@@ -1302,9 +1313,11 @@ class Microwave3D:
                 const = 1/((urp[0,0,:] + urp[1,1,:] + urp[2,2,:])/3)
             elif bc.modetype(k0) == 'TM':
                 const = 1/((erp[0,0,:] + erp[1,1,:] + erp[2,2,:])/3)
+            
             const = np.squeeze(const)
-            field_p = sparam_field_power(self.mesh.nodes, tri_vertices, bc, k0, fieldfunction, const, 4)
-            mode_p = sparam_mode_power(self.mesh.nodes, tri_vertices, bc, k0, const, 4)
+            field_p = sparam_field_power(self.mesh.nodes, tri_vertices, bc, mode_nr, active, k0, fieldfunction, const, 4)
+            mode_p = sparam_mode_power(self.mesh.nodes, tri_vertices, bc, mode_nr, k0, const, 4)
+            
             return field_p, mode_p
 
 

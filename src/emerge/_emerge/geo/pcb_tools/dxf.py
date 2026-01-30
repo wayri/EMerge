@@ -344,7 +344,8 @@ def import_dxf(filename: str,
                thickness: float | None = None,
                unit: float | None = None,
                cs: CoordinateSystem | None = GCS,
-               trace_material: Material = PEC) -> PCB:
+               trace_material: Material = PEC,
+               split: bool = True) -> PCB:
     
     polies = extract_polygons_with_meta(filename)
     prop = inspect_pcb_from_dxf(filename)
@@ -376,12 +377,17 @@ def import_dxf(filename: str,
         xs = [x for x in xs]
         ys = [y for y in ys]
         loop = Loop(xs, ys)
-        loop.cleanup()
-        to_add, to_remove = loop.split()
-        for i, (xs, ys) in enumerate(to_add):
-            pcb.add_poly(xs, ys, z=z, name=poly['handle']+f'_{i}')
-        for i, (xs, ys) in enumerate(to_remove):
-            pcb.add_hole(xs, ys, z=z, name=poly['handle']+f'_remove_{i}')
+        
+        if split:
+            to_add, to_remove = loop.split()
+            for i, (xs, ys) in enumerate(to_add):
+                pcb.add_poly(xs, ys, z=z, name=poly['handle']+f'_{i}')
+            for i, (xs, ys) in enumerate(to_remove):
+                pcb.add_hole(xs, ys, z=z, name=poly['handle']+f'_remove_{i}')
+        else:
+            xs = list(loop.x)
+            ys = list(loop.y)
+            pcb.add_poly(xs, ys, z, name=poly['handle'])
             
     return pcb
 

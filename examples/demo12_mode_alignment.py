@@ -44,8 +44,12 @@ m.generate_mesh()
 m.view()
 
 # Next we define our modal ports.
-p1 = m.mw.bc.ModalPort(wg.face('front', tool=cyl), 1)
-p2 = m.mw.bc.ModalPort(wg.face('back', tool=cyl), 2)
+# We will use the number_of_modes property to indicate how many modes that are solved for will be included in the
+# port sweep. By default this is 1 mode. 
+# We also specify the mode type to ensure the proper computation of the port properties.
+
+p1 = m.mw.bc.ModalPort(wg.face('front', tool=cyl), 1, modetype='TE', number_of_modes=2)
+p2 = m.mw.bc.ModalPort(wg.face('back', tool=cyl), 2, modetype='TE', number_of_modes=2)
 
 # To align our modes we use the .align_modes() method. This takes a series of arguments
 # in the form of an Axis object, a tuple like (1,0,0) for +X or a numpy array (np.array([0,1,0])).ArithmeticError
@@ -56,18 +60,12 @@ p2 = m.mw.bc.ModalPort(wg.face('back', tool=cyl), 2)
 p1.align_modes(em.ZAX, em.XAX)
 p2.align_modes(em.ZAX, em.XAX)
 
-# We will now iterate through our modes and solve our system. The mode used for a simulation is defined by setting the
-# mode_obj.selected_mode index. The first is 0, the second 1 etc. EMerge will automatically bundle our data.
-
-for i1, i2 in m.parameter_sweep(False, p1=(0,1), p2=(0,1)):
-    p1.selected_mode = i1
-    p2.selected_mode = i2
-    data = m.mw.run_sweep()
+data = m.mw.run_sweep()
 
 # We can now visualize the mode fields in order. Please keep in mind that by default we look into the -X, -Y, -Z direction.
 
-for i in range(2):
-    for j in range(2):
+for i in range(1,3):
+    for j in range(1,3):
         m.display.add_object(wg)
         m.display.add_portmode(p1, 30, k0=data.field[0].k0, mode_number=i)
         m.display.add_portmode(p2, 30, k0=data.field[0].k0, mode_number=j)
@@ -77,10 +75,16 @@ for i in range(2):
 
 sgrid = data.scalar.grid
 
-S21 = sgrid.S(2,1)
-S21_11 = S21[0,0,:]
-S21_21 = S21[1,0,:]
-S21_12 = S21[0,1,:]
-S21_22 = S21[1,1,:]
+# In emerge we can use floating point notation to specify different modes.
+# Due to the previously specified alignment vectors we know that:
+# 1.1 = Port 1 Z-polarized
+# 1.2 = Port 1 X-polarized
+# 2.1 = Port 2 Z-polarized
+# 2.2 = Port 2 X-polarized
 
-plot_sp(sgrid.freq[0,0,:], [S21_11, S21_12, S21_21, S21_22], labels=['T11','T12','T21','T22'])
+S21_11 = sgrid.S(2.1, 1.1)
+S21_12 = sgrid.S(2.1, 1.2)
+S21_21 = sgrid.S(2.1, 2.1)
+S21_22 = sgrid.S(2.1, 2.2)
+
+plot_sp(sgrid.freq, [S21_11, S21_12, S21_21, S21_22], labels=['S2:1,1:1','S2:1,1:2','S2:1,2:1','S2:1,2:2'])

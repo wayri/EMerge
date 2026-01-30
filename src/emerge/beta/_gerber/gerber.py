@@ -31,13 +31,13 @@ import math
 
 from ..._emerge import geo
 from ..._emerge.cs import CoordinateSystem, GCS
-from ..._emerge.geometry import GeoSurface, GeoPolygon
+from ..._emerge.geometry import GeoSurface
 from ..._emerge.mth.loopsplit import Loop
 
 from loguru import logger
 
 N_CIRC_MIN = 6
-N_CIRC_MAX = 21
+N_CIRC_MAX = 31
 
 def _calc_via_segs(diameter: float, 
                    nsegments: int, 
@@ -194,7 +194,6 @@ def parse_arc(cmd: Arc2, ds: float, reverse: bool, Nseg: int, max_size: float | 
         
     w = float(cmd.aperture.diameter.as_millimeters())/2
     
-    print(w)
     dang = np.angle((dx1+1j*dy1)/(dx0+1j*dy0))
     if dang > 0:
         dang = dang - 2*np.pi
@@ -362,7 +361,7 @@ class ClosedPoly:
     def xy(self) -> tuple[list[float], list[float]]:
         return self.xs, self.ys
     
-    def simplify(self, min_distance: float, min_incl_angle: float = 5, min_remove_angle: float = 10):
+    def simplify(self, min_distance: float, min_incl_angle: float = 2, min_remove_angle: float = 10):
         """
         Simplify a closed polygon (last point is NOT repeated as first) by iteratively
         removing vertices according to the following rules:
@@ -382,7 +381,7 @@ class ClosedPoly:
 
         After any removal, the process restarts until no more points are removed.
         """
-
+        min_distance = min_distance/1000
         # Optional guard: do nothing for very small polygons
         if len(self.points) <= 6:
             return
@@ -435,6 +434,7 @@ class ClosedPoly:
                 angle = math.degrees(math.acos(cos_angle))  # in [0, 180]
 
                 remove = False
+                
                 if abs(angle) < min_incl_angle:
                     remove = True
                 elif (
@@ -470,8 +470,11 @@ class GerberLayer:
                  res_mm: float,
                  n_circ_segments: int = 8,
                  seg_size_mm: float | None = None,
+                 min_incl_angle: float = 2.0,
+                 min_remove_angle: float = 10.0,
                  ignore_via_pads: bool = True,
                  cs: CoordinateSystem = GCS,
+                 simplify: bool = True
                  ):
         
         self.fname: str = filename
@@ -482,13 +485,16 @@ class GerberLayer:
         
         self._nseg: int = n_circ_segments
         self._seg_size_mm: float = seg_size_mm
+        self._min_incl_angle: float = min_incl_angle
+        self._min_remove_angle: float = min_remove_angle
         
         self.xs = []
         self.ys = []
         
         self.cs: CoordinateSystem = cs
         self.parse_file()
-        self.simplify()
+        if simplify:
+            self.simplify()
     
     def bounds(self, margin: float | tuple[float, float, float, float] = 0.0) -> tuple[float, float, float, float]:
         if isinstance(margin, (float, int)):
@@ -567,7 +573,7 @@ class GerberLayer:
      
     def simplify(self):
         for poly in self.polies:
-            poly.simplify(self.res_mm)
+            poly.simplify(self.res_mm, self._min_incl_angle, self._min_remove_angle)
     
     def flatten(self, z: float = 0.0) -> GeoSurface:
         """Merge a GerberLayer into a GeoSurface
@@ -582,7 +588,6 @@ class GerberLayer:
         
         xall = []
         yall = []
-        import gmsh
 
         for isdark, polygons in groupby(self.polies, key=lambda x: x.dark):
             if poly is None and not isdark:
@@ -590,6 +595,8 @@ class GerberLayer:
             surfs = []
             for pol in polygons:
                 x, y = pol.xy
+                if len(x) < 3:
+                    continue
                 loop = Loop(np.array(x),np.array(y))
                 add, remove = loop.split()
                 LA = []
@@ -615,7 +622,6 @@ class GerberLayer:
            
             self.xs = xall
             self.ys = yall
-            gmsh.fltk.run()
             if poly is None:
                 poly = geo.unite(*surfs)
                 continue

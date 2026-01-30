@@ -83,13 +83,13 @@ data = model.mw.run_sweep()
 ff_data = data.field[0].farfield_2d(
     (1, 0, 0), (0, 1, 0), radiation_boundary,
     (-90, 90))
-plot_ff(ff_data.ang * 180/np.pi, ff_data.normE/em.lib.EISO, dB=True, ylabel='Gain [dBi]')
+plot_ff(ff_data.ang * 180/np.pi, ff_data.gain.norm, dB=True, ylabel='Gain [dBi]')
 
 # --- Visualization ------------------------------------------------------
 model.display.add_object(horn_vol, opacity=0.1)
 model.display.add_object(feed, opacity=0.1)
 model.display.add_field(data.field[0].farfield_3d(radiation_boundary).surfplot(
-        'normE', 'abs', True, True, -10, 5*cm, (waveguide_length+aperture_length,0,0)
+        'normE', 'abs', True, True, dBfloor=-30, rmax=5*cm, offset=(waveguide_length+aperture_length,0,0)
     ),
 )
 model.display.add_portmode(port1, k0=data.field[0].k0)

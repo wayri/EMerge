@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 import numpy as np
-from ..cs import CoordinateSystem, GCS, Axis, _parse_axis, _parse_vector, Frame
+from ..cs import CoordinateSystem, GCS, Axis, _parse_axis, _parse_vector, Anchor
 from ..geometry import GeoVolume, GeoPolygon, GeoEdge, GeoSurface
 from .shapes import Alignment
 import gmsh
@@ -46,7 +46,7 @@ def _discretize_curve(xfunc: Callable, yfunc: Callable,
     """
     from ..mth.optimized import _subsample_coordinates
     
-    td = np.linspace(t0, t1, 10001)
+    td = np.linspace(t0, t1, 10_001)
     xs = xfunc(td)
     ys = yfunc(td)
     XS, YS = _subsample_coordinates(xs, ys, tol, xmin)
@@ -472,7 +472,7 @@ class XYPolygon:
         return self._finalize(cs) 
     
     def revolve(self, cs: CoordinateSystem, 
-                origin: tuple[float, float, float] | Frame, 
+                origin: tuple[float, float, float] | Anchor, 
                 axis: tuple[float, float,float] | Axis, 
                 angle: float = 360.0, 
                 name: str = 'Revolution') -> GeoPrism:
@@ -535,7 +535,7 @@ class XYPolygon:
     @staticmethod
     def rect(width: float,
              height: float,
-             origin: tuple[float, float] | Frame,
+             origin: tuple[float, float] | Anchor,
              alignment: Alignment = Alignment.CORNER) -> XYPolygon:
         """Create a rectangle in the XY-plane as polygon
 
@@ -624,7 +624,7 @@ class Disc(GeoSurface):
     _default_name: str = 'Disc'
     
     def __init__(self, 
-                 origin: tuple[float, float, float] | Frame,
+                 origin: tuple[float, float, float] | Anchor,
                  radius: float,
                  axis: tuple[float, float, float] | Axis = (0.,0.,1.),
                  radius_opt: float | None = None,
@@ -717,8 +717,8 @@ class Curve(GeoEdge):
 
     @staticmethod
     def helix_rh(
-              pstart: tuple[float, float, float] | Frame,
-              pend: tuple[float, float, float] | Frame,
+              pstart: tuple[float, float, float] | Anchor,
+              pend: tuple[float, float, float] | Anchor,
               r_start: float,
               pitch: float,
               r_end: float | None = None,
@@ -799,8 +799,8 @@ class Curve(GeoEdge):
     
     @staticmethod
     def helix_lh(
-              pstart: tuple[float, float, float] | Frame,
-              pend: tuple[float, float, float] | Frame,
+              pstart: tuple[float, float, float] | Anchor,
+              pend: tuple[float, float, float] | Anchor,
               r_start: float,
               pitch: float,
               r_end: float | None = None,

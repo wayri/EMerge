@@ -18,7 +18,7 @@
 from __future__ import annotations
 import numpy as np
 from loguru import logger
-from typing import Callable, Literal
+from typing import Callable, Literal, Generator
 from dataclasses import dataclass
 from collections import defaultdict
 from ...selection import Selection, FaceSelection
@@ -98,6 +98,17 @@ class MWBoundaryConditionSet(BoundaryConditionSet):
         self._cell._ports.append(port)
         return port
 
+    def iter_port_modes(self) -> Generator[tuple[PortBC, int | float, int], None, None]:
+        """Iterates through all port + smatrix + port mode idex
+
+        Yields:
+            Generator[tuple[PortBC, int | float, int], None, None]: _description_
+        """
+        ports = sorted(self.oftype(PortBC), key=lambda x: x.port_number)
+        for port in ports:
+            for mat_index, mode_nr in port._iter_port_numbers():
+                yield port, mat_index, mode_nr
+        
     # Checks
     def _is_excited(self) -> bool:
         for bc in self.boundary_conditions:
@@ -172,7 +183,7 @@ class RobinBC(BoundaryCondition, Saveable):
     def get_gamma(self, k0: float) -> complex:
         raise NotImplementedError('get_gamma not implemented for Port class')
     
-    def get_Uinc(self, x_local: np.ndarray, y_local: np.ndarray, k0: float) -> np.ndarray:
+    def get_Uinc(self, x_local: np.ndarray, y_local: np.ndarray, k0: float, mode_nr: int = 1) -> np.ndarray:
         raise NotImplementedError('get_Uinc not implemented for Port class')
 
 class PortBC(RobinBC, Saveable):
@@ -194,6 +205,9 @@ class PortBC(RobinBC, Saveable):
         self.port_number: int = -1
         self.cs: CoordinateSystem = GCS
         self.selected_mode: int = 0
+        self.port_modes: dict[int, tuple[complex,...]] = {
+            1: (1.0 + 0.0j,)
+        }
         self.Z0: complex | float | None = None
         self.active: bool | None = False
         self.driven: bool = True
@@ -202,7 +216,39 @@ class PortBC(RobinBC, Saveable):
     @property
     def voltage(self) -> complex | None:
         return None
+    
+    def _gen_port_number(self, mode_nr: int) -> int | float:
+        if len(self.port_modes) == 1:
+            return self.port_number
+        else:
+            return float(f'{self.port_number}.{mode_nr}')
         
+    def _iter_port_numbers(self) -> Generator[tuple[int | float, int], None, None]:
+        """Iterates over all the mode/port numbers to include.
+
+        Returns:
+            _type_: _description_
+
+        Yields:
+            Generator[int | float, None, None]: _description_
+        """
+        if len(self.port_modes)==1:
+            yield self.port_number, 1
+        else:
+            for number in sorted(self.port_modes.keys()):
+                yield self._gen_port_number(number), number
+                
+    def _iter_modes(self, k0: float) -> Generator[tuple[int | float, Callable], None, None]:
+        if len(self.port_modes) == 1:
+            def Ufunc(x,y,z): 
+                return self.get_Uinc(x,y,z,k0)
+            yield self.port_number, Ufunc
+        else:
+            for mode_nr in sorted(self.port_modes.keys()):
+                def Ufunc(x,y,z): 
+                    return self.get_Uinc(x,y,z,k0, mode_nr=mode_nr)
+                yield self._gen_port_number(mode_nr), Ufunc
+               
     def get_basis(self) -> np.ndarray:
         return self.cs._basis
     
@@ -270,7 +316,8 @@ class PortBC(RobinBC, Saveable):
                      xs: np.ndarray,
                      ys: np.ndarray,
                      k0: float,
-                     which: Literal['E','H'] = 'E') -> np.ndarray:
+                     which: Literal['E','H'] = 'E',
+                     mode_nr: int = 1) -> np.ndarray:
         raise NotImplementedError('port_mode_3d not implemented for Port class')
     
     def port_mode_3d_global(self, 
@@ -278,9 +325,10 @@ class PortBC(RobinBC, Saveable):
                                 y_global: np.ndarray,
                                 z_global: np.ndarray,
                                 k0: float,
-                                which: Literal['E','H'] = 'E') -> np.ndarray:
+                                which: Literal['E','H'] = 'E',
+                                mode_nr: int = 1) -> np.ndarray:
             xl, yl, _ = self.cs.in_local_cs(x_global, y_global, z_global)
-            Ex, Ey, Ez = self.port_mode_3d(xl, yl, k0)
+            Ex, Ey, Ez = self.port_mode_3d(xl, yl, k0, mode_nr=mode_nr)
             Exg, Eyg, Ezg = self.cs.in_global_basis(Ex, Ey, Ez)
             return np.array([Exg, Eyg, Ezg])
 
@@ -399,12 +447,13 @@ class FloquetPort(PortBC, Saveable):
         self.active: bool = False
         self.power: float = power
         self.type: str = 'TEM'
-        self.mode: tuple[int,int] = (1,0)
         self.cs: CoordinateSystem = cs
         self.scan_theta: float = 0
         self.scan_phi: float = 0
-        self.pol_s: complex = 1.0 + 0j
-        self.pol_p: complex = 0j
+        self.port_modes: dict[int, tuple[complex, complex]] = {
+            1: (1.0 + 0.0j, 0.0 + 0.0j),
+            2: (0.0 + 0.0j, 1.0 + 0.0j)
+        }
         self.area: float = 1
         self.width: float | None = None
         self.height: float | None = None
@@ -434,23 +483,24 @@ class FloquetPort(PortBC, Saveable):
         """
         return 1j*self.get_beta(k0)
     
-    def get_Uinc(self, x_global: np.ndarray, y_global: np.ndarray, z_global: np.ndarray, k0: float) -> np.ndarray:
-        return -2*1j*self.get_beta(k0)*self.port_mode_3d_global(x_global, y_global, z_global, k0)
+    def get_Uinc(self, x_global: np.ndarray, y_global: np.ndarray, z_global: np.ndarray, k0: float, mode_nr: int = 1) -> np.ndarray:
+        return -2 * 1j * self.get_beta(k0) * self.port_mode_3d_global(x_global, y_global, z_global, k0, mode_nr=mode_nr)
     
     def port_mode_3d(self, 
                      x_local: np.ndarray,
                      y_local: np.ndarray,
                      k0: float,
-                     which: Literal['E','H'] = 'E') -> np.ndarray:
+                     which: Literal['E','H'] = 'E',
+                     mode_nr: int = 1
+                     ) -> np.ndarray:
         ''' Compute the port mode E-field in local coordinates (XY) + Z out of plane.'''
 
+        S, P = self.port_modes[mode_nr]
         kx = k0*np.sin(self.scan_theta)*np.cos(self.scan_phi)
         ky = k0*np.sin(self.scan_theta)*np.sin(self.scan_phi)
-        kz = k0*np.cos(self.scan_theta)
+        #kz = k0*np.cos(self.scan_theta)
         phi = np.exp(-1j*(x_local*kx + y_local*ky))
 
-        P = self.pol_p
-        S = self.pol_s
 
         E0 = self.get_amplitude(k0)
         Ex = E0*(-S*np.sin(self.scan_phi) - P*np.cos(self.scan_theta)*np.cos(self.scan_phi))*phi
@@ -464,12 +514,14 @@ class FloquetPort(PortBC, Saveable):
                             y_global: np.ndarray,
                             z_global: np.ndarray,
                             k0: float,
-                            which: Literal['E','H'] = 'E') -> np.ndarray:
+                            which: Literal['E','H'] = 'E',
+                            mode_nr: int = 1
+                            ) -> np.ndarray:
         '''Compute the port mode field for global xyz coordinates.'''
         if self.cs is None:
             raise ValueError('No coordinate system is defined for this FloquetPort')
         xl, yl, _ = self.cs.in_local_cs(x_global, y_global, z_global)
-        Ex, Ey, Ez = self.port_mode_3d(xl, yl, k0)
+        Ex, Ey, Ez = self.port_mode_3d(xl, yl, k0, mode_nr=mode_nr)
         Exg, Eyg, Ezg = self.cs.in_global_basis(Ex, Ey, Ez)
         return np.array([Exg, Eyg, Ezg])
         
@@ -489,6 +541,7 @@ class ModalPort(PortBC, Saveable):
                  cs: CoordinateSystem | None = None,
                  power: float = 1,
                  modetype: Literal['TE','TM','TEM'] | None = None,
+                 number_of_modes: int = 1,
                  mixed_materials: bool = False):
         """Generes a ModalPort boundary condition for a port that requires eigenmode solutions for the mode.
 
@@ -517,8 +570,12 @@ class ModalPort(PortBC, Saveable):
         self.alignment_vectors: list[Axis] = []
 
         self.selected_mode: int = 0
-        self.modes: dict[float, list[PortMode]] = defaultdict(list)
-
+        self.available_modes: dict[float, list[PortMode]] = defaultdict(list)
+        self.port_modes: dict[int | float, tuple[complex, ...]] = dict()
+        for i in range(1, number_of_modes + 1):
+            vec = [0.0 + 0.0j for _ in range(number_of_modes)]
+            vec[i-1] = 1.0 + 0.0j
+            self.port_modes[i] = vec
         self.forced_modetype: Literal['TE','TM','TEM'] | None = modetype
         self.mixed_materials: bool = mixed_materials
         self.initialized: bool = False
@@ -538,7 +595,7 @@ class ModalPort(PortBC, Saveable):
         self._ur: np.ndarray | None = None
         
         self.vintline: list[Line] = []
-
+    
     @property
     def _size_constraint(self) -> float:
         area = self.selection.area
@@ -555,16 +612,16 @@ class ModalPort(PortBC, Saveable):
         self.vintline.append(Line.from_points(c1, c2, N))
     
     def reset(self) -> None:
-        self.modes: dict[float, list[PortMode]] = defaultdict(list)
+        self.available_modes: dict[float, list[PortMode]] = defaultdict(list)
         self.initialized: bool = False
         self.plus_terminal: list[tuple[int, int]] = []
         self.minus_terminal: list[tuple[int, int]] = []
         
     def portZ0(self, k0: float) -> complex | float | None:
-        return self.get_mode(k0).Z0
+        return self.get_modes(k0)[0].Z0
     
     def modetype(self, k0: float) -> Literal['TEM','TE','TM']:
-        return self.get_mode(k0).modetype
+        return self.get_modes(k0)[0].modetype
     
     def align_modes(self, *axes: tuple | np.ndarray | Axis) -> None:
         """Set a reriees of Axis objects that define a sequence of mode field
@@ -611,13 +668,29 @@ class ModalPort(PortBC, Saveable):
                                        ' - Your mode face is not appropriately supporting a modal solution.'
                                        )
             raise ValueError('ModalPort is not properly configured. No modes are defined.')
-        return len(self.modes[self._last_k0])
+        return len(self.available_modes[self._last_k0])
     
     @property
     def voltage(self) -> complex:
-        mode = self.get_mode(0)
+        mode = self.get_modes(0)[0]
         return np.sqrt(mode.Z0)
+    
+    def _check_mode_betas(self) -> None:
+        """Performs a check if the port mode vectors are properly configured
+        """
         
+        for k0, modes in self.available_modes.items():
+            if len(modes)==1:
+                continue
+            betas = [np.real(mode.beta) for mode in modes]
+            mean_beta = sum(betas)/len(betas)
+            std_beta = (sum([(beta-mean_beta)**2 for beta in betas])/len(betas))**0.5
+            str_betas = ','.join([f'{beta:.1f}' for beta in betas])
+            if std_beta/mean_beta > 1e-2:
+                logger.warning(f'A variation in port mode propagation constants (k0={k0:.1f}) of {std_beta/mean_beta*100:.2f}% is detected. Only multi mode ports with similar'+
+                                f'propagation constants are suppored. Betas are {str_betas}')
+                DEBUG_COLLECTOR.add_report('A variation in port mode propagation constants (k0={k0:.1f}) is detected. Only multi mode ports with similar'+
+                                f'propagation constants are suppored. Betas are {str_betas}')
     def sort_modes(self) -> None:
         """Sorts the port modes based on total energy
         """
@@ -628,7 +701,7 @@ class ModalPort(PortBC, Saveable):
             X = X.flatten()
             Y = Y.flatten()
             Z = Z.flatten()
-            for k0, modes in self.modes.items():
+            for k0, modes in self.available_modes.items():
                 logger.trace(f'Aligning modes for k0={k0:.3f} rad/m')
                 new_modes = []
                 for ax in self.alignment_vectors:
@@ -639,37 +712,52 @@ class ModalPort(PortBC, Saveable):
                     logger.trace(f'Optimal mode = {opt_mode} ({integral}), polarization alignment = {opt_mode.polarity}')
                     new_modes.append(opt_mode)
                     
-                self.modes[k0] = new_modes
+                self.available_modes[k0] = new_modes
             return
-        for k0, modes in self.modes.items():
-            self.modes[k0] = sorted(modes, key=lambda m: m.beta, reverse=True)
+        for k0, modes in self.available_modes.items():
+            self.available_modes[k0] = sorted(modes, key=lambda m: m.beta, reverse=True)
 
-    def get_mode(self, k0: float, i=None) -> PortMode:
-        """Returns a given mode solution in the form of a PortMode object.
+    def get_modes(self, k0: float) -> list[PortMode]:
+        """Returns a list of mode solution in the form of a PortMode object for a specific k0.
 
         Args:
-            i (_type_, optional): The mode solution number. Defaults to None.
+            k0 (float): The propagation constant
 
         Returns:
             PortMode: The requested PortMode object
         """
-        options = self.modes[min(self.modes.keys(), key=lambda k: abs(k - k0))]
-        if i is None:
-            i = min(len(options)-1, self.selected_mode)
-        return options[i]
+        options = self.available_modes[min(self.available_modes.keys(), key=lambda k: abs(k - k0))]
+        return options
     
-    def global_field_function(self, k0: float = 0, which: Literal['E','H'] = 'E') -> Callable:
+    def global_field_function(self, k0: float = 0, which: Literal['E','H'] = 'E', mode_nr: int = 1) -> Callable:
         ''' The field function used to compute the E-field. 
         This field-function is defined in global coordinates (not local coordinates).'''
-        mode = self.get_mode(k0)
+        modes = self.get_modes(k0)
+        
         if which == 'E':
-            return lambda x,y,z: mode.norm_factor * self._qmode(k0) * mode.E_function(x,y,z)*mode.polarity
+            def modef(x,y,z):
+                amplitudes = self.port_modes[mode_nr]
+                out = np.zeros((3, x.shape[0]), dtype=np.complex128)
+                for amp, mode in zip(amplitudes, modes):
+                    if amp == 0:
+                        continue
+                    out += amp*(mode.norm_factor * self._qmode(k0) * mode.E_function(x,y,z)*mode.polarity)
+                return out
+            return modef
         else:
-            return lambda x,y,z: mode.norm_factor * self._qmode(k0) * mode.H_function(x,y,z)*mode.polarity
+            def modef(x,y,z):
+                amplitudes = self.port_modes[mode_nr]
+                out = np.zeros((3, x.shape[0]), dtype=np.complex128)
+                for amp, mode in zip(amplitudes, modes):
+                    if amp == 0:
+                        continue
+                    out += amp*(mode.norm_factor * self._qmode(k0) * mode.H_function(x,y,z)*mode.polarity)
+                return out
+            return modef
     
     def clear_modes(self) -> None:
         """Clear all port mode data"""
-        self.modes = defaultdict(list)
+        self.available_modes = defaultdict(list)
         self.initialized = False
 
     def add_mode(self, 
@@ -679,7 +767,6 @@ class ModalPort(PortBC, Saveable):
                  beta: float,
                  k0: float,
                  residual: float,
-                 number: int,
                  freq: float) -> PortMode | None:
         """Add a mode function to the ModalPort
 
@@ -701,14 +788,14 @@ class ModalPort(PortBC, Saveable):
             logger.debug(f'Ignoring mode due to a low mode energy: {mode.energy}')
             return None
         
-        self.modes[k0].append(mode)
+        self.available_modes[k0].append(mode)
         self.initialized = True
 
         self._last_k0 = k0
         if self._first_k0 is None:
             self._first_k0 = k0
         else:
-            ref_field = self.get_mode(self._first_k0, -1).modefield
+            ref_field = self.get_modes(self._first_k0)[-1].modefield
             polarity = np.sign(np.sum(field*ref_field).real)
             logger.debug(f'Mode polarity = {polarity}')
             mode.polarity = polarity
@@ -722,7 +809,7 @@ class ModalPort(PortBC, Saveable):
         return self.cs._basis_inv
     
     def get_beta(self, k0: float) -> float:
-        mode = self.get_mode(k0)
+        mode = self.get_modes(k0)[0]
         if self.forced_modetype=='TEM':
             beta = mode.beta/mode.k0 * k0
         else:
@@ -733,17 +820,19 @@ class ModalPort(PortBC, Saveable):
     def get_gamma(self, k0: float) -> complex:
         return 1j*self.get_beta(k0)
     
-    def get_Uinc(self, x_global: np.ndarray, y_global: np.ndarray, z_global: np.ndarray, k0) -> np.ndarray:
-        return -2*1j*self.get_beta(k0)*self.port_mode_3d_global(x_global, y_global, z_global, k0)
+    def get_Uinc(self, x_global: np.ndarray, y_global: np.ndarray, z_global: np.ndarray, k0, mode_nr: int = 1) -> np.ndarray:
+        
+        return -2*1j*self.get_beta(k0)*self.port_mode_3d_global(x_global, y_global, z_global, k0, mode_nr=mode_nr)
     
     def port_mode_3d(self, 
                      x_local: np.ndarray,
                      y_local: np.ndarray,
                      k0: float,
-                     which: Literal['E','H'] = 'E') -> np.ndarray:
+                     which: Literal['E','H'] = 'E',
+                     mode_nr: int = 1) -> np.ndarray:
         x_global, y_global, z_global = self.cs.in_global_cs(x_local, y_local, 0*x_local)
 
-        Egxyz = self.port_mode_3d_global(x_global,y_global,z_global,k0,which=which)
+        Egxyz = self.port_mode_3d_global(x_global,y_global,z_global, k0, which=which, mode_nr=mode_nr)
         
         Ex, Ey, Ez = self.cs.in_local_basis(Egxyz[0,:], Egxyz[1,:], Egxyz[2,:])
 
@@ -755,8 +844,9 @@ class ModalPort(PortBC, Saveable):
                             y_global: np.ndarray,
                             z_global: np.ndarray,
                             k0: float,
-                            which: Literal['E','H'] = 'E') -> np.ndarray:
-        Ex, Ey, Ez = self.global_field_function(k0, which)(x_global,y_global,z_global)
+                            which: Literal['E','H'] = 'E',
+                            mode_nr: int = 1) -> np.ndarray:
+        Ex, Ey, Ez = self.global_field_function(k0, which, mode_nr)(x_global,y_global,z_global)
         Exyz = np.array([Ex, Ey, Ez])
         return Exyz
 
@@ -869,13 +959,14 @@ class RectangularWaveguide(PortBC, Saveable):
         """
         return 1j*self.get_beta(k0)
     
-    def get_Uinc(self, x_global: np.ndarray, y_global: np.ndarray, z_global: np.ndarray, k0: float) -> np.ndarray:
-        return -2*1j*self.get_beta(k0)*self.port_mode_3d_global(x_global, y_global, z_global, k0)
+    def get_Uinc(self, x_global: np.ndarray, y_global: np.ndarray, z_global: np.ndarray, k0: float, mode_nr: int = None) -> np.ndarray:
+        return -2*1j*self.get_beta(k0)*self.port_mode_3d_global(x_global, y_global, z_global, k0, mode_nr=mode_nr)
     
     def port_mode_3d(self, 
                      x_local: np.ndarray,
                      y_local: np.ndarray,
                      k0: float,
+                     mode_nr: int = None,
                      which: Literal['E','H'] = 'E') -> np.ndarray:
         ''' Compute the port mode E-field in local coordinates (XY) + Z out of plane.'''
 
@@ -895,6 +986,7 @@ class RectangularWaveguide(PortBC, Saveable):
                             y_global: np.ndarray,
                             z_global: np.ndarray,
                             k0: float,
+                            mode_nr: int = None,
                             which: Literal['E','H'] = 'E') -> np.ndarray:
         '''Compute the port mode field for global xyz coordinates.'''
         xl, yl, _ = self.cs.in_local_cs(x_global, y_global, z_global)
@@ -995,14 +1087,15 @@ class UserDefinedPort(PortBC, Saveable):
         """
         return 1j*self.get_beta(k0)
     
-    def get_Uinc(self, x_global: np.ndarray, y_global: np.ndarray, z_global: np.ndarray, k0: float) -> np.ndarray:
+    def get_Uinc(self, x_global: np.ndarray, y_global: np.ndarray, z_global: np.ndarray, k0: float, mode_nr: int = 1) -> np.ndarray:
         return -2*1j*self.get_beta(k0)*self.port_mode_3d_global(x_global, y_global, z_global, k0)
     
     def port_mode_3d(self, 
                      x_local: np.ndarray,
                      y_local: np.ndarray,
                      k0: float,
-                     which: Literal['E','H'] = 'E') -> np.ndarray:
+                     which: Literal['E','H'] = 'E',
+                     mode_nr: int = 1) -> np.ndarray:
         x_global, y_global, z_global = self.cs.in_global_cs(x_local, y_local, 0*x_local)
 
         Egxyz = self.port_mode_3d_global(x_global,y_global,z_global,k0,which=which)
@@ -1017,7 +1110,8 @@ class UserDefinedPort(PortBC, Saveable):
                             y_global: np.ndarray,
                             z_global: np.ndarray,
                             k0: float,
-                            which: Literal['E','H'] = 'E') -> np.ndarray:
+                            which: Literal['E','H'] = 'E',
+                            mode_nr: int = 1) -> np.ndarray:
         '''Compute the port mode field for global xyz coordinates.'''
         xl, yl, _ = self.cs.in_local_cs(x_global, y_global, z_global)
         Ex = self._fex(k0, x_global, y_global, z_global)
@@ -1137,7 +1231,7 @@ class LumpedPort(PortBC, Saveable):
         """
         return 1j*k0*Z0/self.surfZ
     
-    def get_Uinc(self, x_global: np.ndarray, y_global: np.ndarray, z_global: np.ndarray, k0) -> np.ndarray:
+    def get_Uinc(self, x_global: np.ndarray, y_global: np.ndarray, z_global: np.ndarray, k0, mode_nr: int = 1) -> np.ndarray:
         Emag = -1j*2*k0 * self.voltage/self.height * (Z0/self.surfZ)
         return Emag*self.port_mode_3d_global(x_global, y_global, z_global, k0)
     
@@ -1145,7 +1239,8 @@ class LumpedPort(PortBC, Saveable):
                      x_local: np.ndarray,
                      y_local: np.ndarray,
                      k0: float,
-                     which: Literal['E','H'] = 'E') -> np.ndarray:
+                     which: Literal['E','H'] = 'E',
+                     mode_nr: int = 1) -> np.ndarray:
         ''' Compute the port mode E-field in local coordinates (XY) + Z out of plane.'''
         raise RuntimeError('This function should never be called in this context.')
 
@@ -1154,7 +1249,8 @@ class LumpedPort(PortBC, Saveable):
                             y_global: np.ndarray,
                             z_global: np.ndarray,
                             k0: float,
-                            which: Literal['E','H'] = 'E') -> np.ndarray:
+                            which: Literal['E','H'] = 'E',
+                            mode_nr: int = 1) -> np.ndarray:
         """Computes the port-mode field in global coordinates.
 
         The mode field will be evaluated at x,y,z coordinates but projected onto the local 2D coordinate system.

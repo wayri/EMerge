@@ -33,7 +33,7 @@ m.check_version("2.1.1") # Checks version compatibility.
 
 th = 0.5         # substrate thickness (meters)
 Hair = 2.0
-pcb = em.geo.PCB(th, unit=mm, cs=em.GCS,
+pcb = em.geo.PCBNew(th, unit=mm, cs=em.GCS,
                           material=em.lib.DIEL_RO4003C, layers=2)
 # Compute 50-ohm microstrip width
 w0 = pcb.calc.z0(50)
@@ -77,7 +77,7 @@ air = pcb.generate_air(Hair)                  # surrounding air block
 m.commit_geometry()
 
 # --- Solver and mesh settings -------------------------------------------
-m.mw.set_frequency_range(0.05e9, 0.3e9, 51)       # 50–300 MHz sweep
+m.mw.set_frequency_range(0.05e9, 0.3e9, 31)       # 50–300 MHz sweep
 m.mesher.set_boundary_size(traces, 0.5 * mm)
 
 # Refine mesh around lumped component faces
@@ -101,12 +101,14 @@ for le in LEs:
 
 # --- Run frequency-domain simulation ------------------------------------
 data = m.mw.run_sweep(parallel=True, n_workers=4, frequency_groups=8)
-
+grid = data.scalar.grid
 # --- Post-processing: plot S-parameters ---------------------------------
-f = data.scalar.grid.freq
-S11 = data.scalar.grid.S(1, 1)
-S21 = data.scalar.grid.S(2, 1)
-plot_sp(f, [S11, S21], xunit='MHz', labels=['S11', 'S21'])
+f = grid.freq
+fd = grid.dense_f(1001)
+S11 = grid.model_S(1, 1, fd)
+S21 = grid.model_S(2, 1, fd)
+
+plot_sp(fd, [S11, S21], xunit='MHz', labels=['S11', 'S21'])
 
 # --- Visualize field distribution ---------------------------------------
 m.display.add_object(diel, opacity=0.1)

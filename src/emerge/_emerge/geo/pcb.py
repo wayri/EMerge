@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from ..cs import CoordinateSystem, GCS, Frame, argparse_xyz, _parse_vector
+from ..cs import CoordinateSystem, GCS, Anchor, argparse_xyz, _parse_vector
 from ..geometry import GeoPolygon, GeoVolume, GeoSurface
 from emsutil import Material, AIR, PEC
 from .shapes import Box, Plate, Cylinder, Alignment
@@ -114,8 +114,8 @@ class Via:
     segments: int
 
     @property
-    def pnt(self) -> Frame:
-        return Frame((self.x, self.y, 0))
+    def pnt(self) -> Anchor:
+        return Anchor((self.x, self.y, 0))
     
 class RouteElement:
     _DEFNAME: str = 'RouteElement'
@@ -131,9 +131,14 @@ class RouteElement:
         self.lcutnext: bool = False
         self.lcutprev: bool = False
     
+    def _back(self, dist: float) -> None:
+        """Moves the start of this element back in its primary direction"""
+        self.x = self.x - self.direction[0]*dist
+        self.y = self.y - self.direction[1]*dist
+
     @property
-    def pnt(self) -> Frame:
-        return Frame((self.x, self.y, 0.0))
+    def pnt(self) -> Anchor:
+        return Anchor((self.x, self.y, 0.0))
     
     @property
     def xy(self) -> tuple[float, float]:
@@ -161,7 +166,7 @@ class RouteElement:
 class StripLine(RouteElement):
     _DEFNAME: str = 'StripLine'
     def __init__(self,
-                 x: float | Frame,
+                 x: float | Anchor,
                  y: float,
                  width: float,
                  direction: tuple[float, float]):
@@ -190,7 +195,7 @@ class StripLine(RouteElement):
 class StripTurn(RouteElement):
     _DEFNAME: str = 'StripTurn'
     def __init__(self,
-                 x: float | Frame,
+                 x: float | Anchor,
                  y: float,
                  width: float,
                  direction: tuple[float, float],
@@ -320,7 +325,7 @@ class StripTurn(RouteElement):
  
 class StripCurve(StripTurn):
     def __init__(self,
-                 x: float | Frame,
+                 x: float | Anchor,
                  y: float,
                  width: float,
                  direction: tuple[float, float],
@@ -394,7 +399,8 @@ class PCBPoly:
         self.z: float = z
         self.material: Material = material
         self.name: str = _NAME_MANAGER(name, self._DEFNAME)
-        
+        #self.cleanup_close_points()
+    
     @property
     def xys(self) -> list[tuple[float, float]]:
         return list([(x,y) for x,y in zip(self.xs, self.ys)])
@@ -430,7 +436,8 @@ class StripPath:
         self.path: list[RouteElement] = []
         self.z: float = 0
         self.name: str = _NAME_MANAGER(name, self._DEFNAME)
-
+        self._consume: float = 0
+        
     
     def iter_right(self) -> Generator[tuple[RouteElement, RouteElement, RouteElement], None, None]:
         N = len(self.path)
@@ -465,13 +472,36 @@ class StripPath:
         """ The end of the stripline """
         return self.path[-1]
     
+    @property
+    def bck(self) -> StripPath:
+        """ Proceed one half stripline distance back."""
+        w = self.end.width
+        self.end._back(w/2)
+        return self
+    
+    @property
+    def skip(self) -> StripPath:
+        """Remove half the stripline distance from the next element
+
+        Returns:
+            StripPath: _description_
+        """
+        w = self.end.width/2
+        self._consume = w
+        return self
+    
+    def _cons(self, dist: float) -> float:
+        dist = dist - self._consume
+        self._consume = 0
+        return dist
+    
     def _check_loops(self) -> None:
         if self.path[0]==self.path[-1]:
             raise RouteException('Loops are currently not supported. To fix this problem, implement a single .cut() call before a .straight() call to break the loop.')
         return None
     
     def init(self, 
-             x: float | Frame, 
+             x: float | Anchor, 
              y: float, 
              width: float, 
              direction: tuple[float, float],
@@ -513,6 +543,7 @@ class StripPath:
         x = self.end.x + dx
         y = self.end.y + dy
 
+        distance = self._cons(distance)
         dx_2, dy_2 = self.end.direction
         x1 = x + distance * dx_2
         y1 = y + distance * dy_2
@@ -546,6 +577,7 @@ class StripPath:
         x = self.end.x 
         y = self.end.y 
 
+        distance = self._cons(distance)
         dx_2, dy_2 = self.end.direction
         x1 = x + distance * dx_2
         y1 = y + distance * dy_2
@@ -587,6 +619,27 @@ class StripPath:
         self._add_element(StripTurn(x, y, width, (dx, dy), angle, corner_type, dsratio=dsratio))
         return self
 
+    def pturn(self, 
+             angle: float, 
+             corner_type: Literal['champher','square'] = 'square',
+             dsratio: float = 0.7) -> StripPath:
+        """Adds a turn to the strip path.
+
+        The angle is specified in degrees. The width of the turn will be the same as the last segment.
+        optionally, a different width may be provided. 
+        By default, all corners will be cut using the "square" type. Other options are not yet provided.
+
+        Args:
+            angle (float): The turning angle
+            width (float, optional): The stripline width. Defaults to None.
+            corner_type (str, optional): The corner type. Defaults to 'champher'.
+            dsratio: (float, optional): The chamfer distance expressed as the proportional of the corner diagonal.
+
+        Returns:
+            StripPath: The current StripPath object
+        """
+        return self.bck.turn(angle, corner_type=corner_type, dsratio=dsratio).skip
+    
     def curve(self, angle: float, radius: float,
              width: float | None = None,
              dang: float = 10) -> StripPath:
@@ -653,7 +706,7 @@ class StripPath:
         y = self.end.y
         z = self.z
         paths = self.pcb.new(x,y,width, direction, z)
-        self.pcb._checkpoint = self
+        self.pcb._checkpoint.append(self)
         return paths
 
     def lumped_element(self, impedance_function: Callable, size: SIZE_NAMES | tuple) -> StripPath:
@@ -731,9 +784,9 @@ class StripPath:
     
     def merge(self) -> StripPath:
         """Continue at the last point where .split() is called"""
-        if self.pcb._checkpoint is None:
+        if len(self.pcb._checkpoint) == 0:
             raise RouteException('No checkpoint known. Make sure to call .check() first')
-        return self.pcb._checkpoint
+        return self.pcb._checkpoint.pop(-1)
     
     def via(self,
             znew: float,
@@ -872,7 +925,7 @@ class StripPath:
         return self.pcb.new(x, y, width, direction)
     
     def to(self, 
-           dest: tuple[float, float] | Frame, 
+           dest: tuple[float, float] | Anchor, 
            arrival_dir: tuple[float, float] | None = None,
            arrival_margin: float  | None= None,
            angle_step: float = 90) -> StripPath:
@@ -1051,9 +1104,12 @@ class PCBLayer:
 #                     PCB DESIGN CLASS                     #
 ############################################################
 
-class PCB:
+class PCBNew:
     _DEFNAME: str = 'PCB'
-    
+    """ The PCB Class can be used to efficiently generate PCB
+    models using method chaining functions to describe traces
+    as a sequence of instructions.
+    """
     def __init__(self,
                  thickness: float,
                  unit: float = 0.001,
@@ -1139,7 +1195,7 @@ class PCB:
 
         self.stored_coords: dict[str,tuple[float, float]] = dict()
         self.stored_striplines: dict[str, StripLine] = dict()
-        self._checkpoint: StripPath = None
+        self._checkpoint: list[StripPath] = []
 
         self.calc: PCBCalculator = PCBCalculator(self._zs, [layer.mat for layer in self._stack], self.unit)
 
@@ -1149,6 +1205,7 @@ class PCB:
             DEBUG_COLLECTOR.add_report('Non PEC surface materials are used without thick traces. The SurfaceImpedance boundary condition will be used that is known to not be accurate.' +
                                        'Please set thick_traces=True in the PCB constructor to ensure accurate losses until this issue is fixed.')
 
+        
     ############################################################
     #                          PROPERTIES                     #
     ############################################################
@@ -1244,6 +1301,7 @@ class PCB:
         for x,y in xys:
             px, py, pz = self.cs.in_global_cs(x*self.unit, y*self.unit, z*self.unit)
             ptags.append(gmsh.model.occ.addPoint(px, py, pz))
+            #print(f'Tag={ptags[-1]} = {px:.7f},{py:.7f},{pz:.7f}')
         
         ltags = []
         for t1, t2 in zip(ptags[:-1], ptags[1:]):
@@ -1299,10 +1357,9 @@ class PCB:
         """
         if layer >= len(self._zs):
             raise ValueError(f'Layer {layer} does not exist in PCB with {len(self._zs)} layers. Since the new version, indexing starts from 0. Perhaps you meant layer {layer-1}?')
-        logger.warning('PCB Indexing no longer counts from 1 but from 0. Please update your code accordingly.')
         return self._zs[layer]
 
-    def add_vias(self, *coordinates: tuple[float, float] | Frame, radius: float,
+    def add_vias(self, *coordinates: tuple[float, float] | Anchor, radius: float,
                  z1: float | None = None,
                  z2: float | None = None,
                  segments: int = 6) -> None:
@@ -1396,7 +1453,7 @@ class PCB:
               z: float,
               width: float | None = None,
               height: float | None = None,
-              origin: tuple[float, float] | Frame | None = None,
+              origin: tuple[float, float] | Anchor | None = None,
               alignment: Alignment = Alignment.CORNER,
               name: str | None = None) -> GeoSurface | GeoVolume:
         """Generates a generic rectangular plate in the XY grid.
@@ -1442,7 +1499,7 @@ class PCB:
             plane = remove(plane, unite(*holes))
         return plane # type: ignore
     
-    def radial_stub(self, pos: tuple[float, float] | Frame, 
+    def radial_stub(self, pos: tuple[float, float] | Anchor, 
                     length: float, 
                     angle: float, 
                     direction: tuple[float, float], 
@@ -1554,7 +1611,7 @@ class PCB:
         return box # type: ignore
 
     def new(self, 
-            x: float | Frame, 
+            x: float | Anchor, 
             y: float, 
             width: float, 
             direction: tuple[float, float],
@@ -1642,6 +1699,65 @@ class PCB:
         
         return poly
 
+    def lumped_port_pts(self, p1: tuple[float, float], p2: tuple[float, float], z: float, z_ground: float | None = None, name: str | None = 'LumpedPort') -> GeoPolygon:
+        """Generate a lumped-port object to be created.
+
+        You can flag any point during routing using list comprehensions and then pass those keys here.
+        
+        Example:
+         >>> mypcb.new(...).straight(...)['mykey']
+         >>> myport = mypcb.lumped_port('mykey')
+        
+        Lumped ports created this way automatically have auxilliary data properties set for the LumpedPort boundary condition.
+        Example:
+         >>> mymodel.mw.bc.LumpedPort(myport, port_nr) 
+        
+        No width, height or axis data is needed.
+        
+        Args:
+            stripline (StripLine | str): The stripline object or a reference to the stripline object
+            z_ground (float | None, optional): The ground height to extrude the port to. Defaults to None.
+            name (str | None, optional): The name for the resultant object. Defaults to 'LumpedPort'.
+
+        Returns:
+            GeoPolygon: The rectangular shaped lumped port object
+        """
+        
+       
+        xy1 = p1
+        xy2 = p2
+        z = z/self.unit
+        if z_ground is None:
+            z_ground = -self.thickness
+        height = z-z_ground
+        
+        width = abs(np.linalg.norm(np.array(xy1)-np.array(xy2)))
+        x1, y1, z1 = self.cs.in_global_cs(xy1[0], xy1[1], z*self.unit - height*self.unit)
+        x2, y2, z2 = self.cs.in_global_cs(xy1[0], xy1[1], z*self.unit )
+        x3, y3, z3 = self.cs.in_global_cs(xy2[0], xy2[1], z*self.unit )
+        x4, y4, z4 = self.cs.in_global_cs(xy2[0], xy2[1], z*self.unit - height*self.unit)
+        
+        ptag1 = gmsh.model.occ.addPoint(x1, y1, z1)
+        ptag2 = gmsh.model.occ.addPoint(x2, y2, z2)
+        ptag3 = gmsh.model.occ.addPoint(x3, y3, z3)
+        ptag4 = gmsh.model.occ.addPoint(x4, y4, z4)
+        
+        ltag1 = gmsh.model.occ.addLine(ptag1, ptag2)
+        ltag2 = gmsh.model.occ.addLine(ptag2, ptag3)
+        ltag3 = gmsh.model.occ.addLine(ptag3, ptag4)
+        ltag4 = gmsh.model.occ.addLine(ptag4, ptag1)
+        
+        ltags = [ltag1, ltag2, ltag3, ltag4]
+        
+        tag_wire = gmsh.model.occ.addWire(ltags)
+        planetag = gmsh.model.occ.addPlaneSurface([tag_wire,])
+        poly = GeoPolygon([planetag,], name='name')
+        poly._aux_data['width'] = abs(width)
+        poly._aux_data['height'] = abs(height*self.unit)
+        poly._aux_data['vdir'] = self.cs.zax
+        
+        return poly
+    
     def modal_port(self,
                   point: StripLine | str,
                   height: float | tuple[float, float],
@@ -1853,3 +1969,25 @@ class PCB:
                 polys = [remove(p, holes_union, remove_tool=i==(len(polys)-1)) for i, p in enumerate(polys)]
         return polys
 
+class PCB(PCBNew):
+    """ DEPRICATED CLASS. Use PCBNew()"""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        logger.warning('PCB() is now depricated due to a change in the behavior of the .z() function.\n' +
+                       'Layers will be counted from 0 instead of 1. Use PCBNew(). Later these will be merged.')
+        DEBUG_COLLECTOR.add_report('PCB() is now depricated due to a change in the behavior of the .z() function.\n' +
+                       'Layers will be counted from 0 instead of 1. Use PCBNew(). Later these will be merged.')
+    def z(self, layer: int) -> float:
+        """
+        Args:
+            layer (int): The layer number (1 to N)
+
+        Returns:
+            float: the z-height
+        """
+        logger.warning('The PCB class will be depricated. Move to PCBNew and index layers counting from 0 instead of 1.')
+        if layer <= 0:
+            return self._zs[layer]
+        
+        return self._zs[layer-1]

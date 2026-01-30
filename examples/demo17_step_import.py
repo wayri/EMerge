@@ -86,6 +86,7 @@ sim.view(selections=[abc], opacity=0.3)
 port = sim.mw.bc.RectangularWaveguide(portface, 1)
 
 # Apply absorbing boundary condition to outer air faces.
+# The abctype 'D' is better at absorbing energy at oblique angles of incidence.
 abc_bc = sim.mw.bc.AbsorbingBoundary(abc, abctype='D')
 
 # Run frequency-domain sweep.

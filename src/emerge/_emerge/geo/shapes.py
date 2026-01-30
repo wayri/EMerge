@@ -17,7 +17,7 @@
 
 import gmsh
 from ..geometry import GeoObject, GeoSurface, GeoVolume
-from ..cs import CoordinateSystem, GCS, Axis, _parse_vector, Frame
+from ..cs import CoordinateSystem, GCS, Axis, _parse_vector, Anchor
 import numpy as np
 from enum import Enum
 from .operations import subtract
@@ -59,7 +59,7 @@ class Box(GeoVolume):
                  width: float, 
                  depth: float, 
                  height: float, 
-                 position: tuple | Frame = (0,0,0),
+                 position: tuple | Anchor = (0,0,0),
                  alignment: Alignment = Alignment.CORNER,
                  cs: CoordinateSystem = GCS,
                  name: str | None = None):
@@ -159,7 +159,7 @@ class Sphere(GeoVolume):
     _default_name: str = 'Sphere'
     def __init__(self, 
                  radius: float,
-                 position: tuple | Frame = (0,0,0)):
+                 position: tuple | Anchor = (0,0,0)):
         """Generates a sphere objected centered ont he position with the given radius
 
         Args:
@@ -237,7 +237,7 @@ class Plate(GeoSurface):
         """
     _default_name: str = 'Plate'
     def __init__(self,
-                origin: tuple[float, float, float] | Frame,
+                origin: tuple[float, float, float] | Anchor,
                 u: tuple[float, float, float],
                 v: tuple[float, float, float],
                 name: str | None = None):
@@ -471,7 +471,7 @@ class HalfSphere(GeoVolume):
     _default_name: str = 'HalfSphere'
     def __init__(self,
                  radius: float,
-                 position: tuple[float, float, float] | Frame = (0,0,0),
+                 position: tuple[float, float, float] | Anchor = (0,0,0),
                  direction: tuple | Axis = (1,0,0),
                  name: str | None = None):
         
@@ -535,7 +535,7 @@ class OldBox(GeoVolume):
                  width: float, 
                  depth: float, 
                  height: float, 
-                 position: tuple | Frame = (0,0,0),
+                 position: tuple | Anchor = (0,0,0),
                  cs: CoordinateSystem = GCS,
                  alignment: Alignment = Alignment.CORNER):
         """Creates a box volume object with selectable sides.
@@ -658,7 +658,7 @@ class Cone(GeoVolume):
         """
     _default_name: str = 'Cone'
     
-    def __init__(self, p0: tuple[float, float, float] | Frame,
+    def __init__(self, p0: tuple[float, float, float] | Anchor,
                  direction: tuple[float, float, float] | Axis,
                  r1: float,
                  r2: float,

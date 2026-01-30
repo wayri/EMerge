@@ -136,7 +136,7 @@ ZAX: Axis = Axis(np.array([0, 0, 1]))
 #                         FUNCTIONS                        #
 ############################################################
 
-def _parse_vector(vec: np.ndarray | tuple[float, float, float] | list[float] | Axis | Frame) -> np.ndarray:
+def _parse_vector(vec: np.ndarray | tuple[float, float, float] | list[float] | Axis | Anchor) -> np.ndarray:
     """ Takes an array, tuple, list or Axis and alwasys returns an array."""
     if isinstance(vec, np.ndarray):
         return vec
@@ -144,7 +144,7 @@ def _parse_vector(vec: np.ndarray | tuple[float, float, float] | list[float] | A
         return np.array(vec)
     elif isinstance(vec, Axis):
         return vec.vector
-    elif isinstance(vec, Frame):
+    elif isinstance(vec, Anchor):
         return vec.c0
     return np.array(vec)
 
@@ -166,7 +166,7 @@ def _parse_axis(vec: np.ndarray | tuple[float, float, float] | list[float] | Axi
     return Axis(np.array(vec))
 
 
-def argparse_xyz(x: float | np.ndarray | tuple[float, float, float] | list[float] | Axis | Frame,
+def argparse_xyz(x: float | np.ndarray | tuple[float, float, float] | list[float] | Axis | Anchor,
                  y: float | None = None,
                  z: float | None = None) -> tuple[float, float, float]:
     """A helper function to parse xyz arguments that can be given
@@ -631,10 +631,10 @@ def cs(axes: str = 'xyz', origin: tuple[float, float, float] = (0.,0.,0.,)) -> C
 
 
 @dataclass
-class Frame(Saveable):
-    """A Frame is a generalization of a coordinate plus a local 3D axis system
+class Anchor(Saveable):
+    """An Anchor is a generalization of a coordinate plus a local 3D axis system
     
-    Frames behave like coordinates when passed as arguments to functions
+    Anchors behave like coordinates when passed as arguments to functions
     that require coordinates. Additionally, they can be used in the .stick()
     method to move anchors of objects aligned with other ancors.
     
@@ -650,13 +650,13 @@ class Frame(Saveable):
         self._y = np.array(self._y)
         self._z = np.array(self._z)
     
-    def __getattr__(self, name: str) -> Frame:
-        """ A frame with the coordinate systems xyz axis oriented
+    def __getattr__(self, name: str) -> Anchor:
+        """ An anchor with the coordinate systems xyz axis oriented
         
         in the provided order.
         Lower case means negative and upper-case positive.
         Example:
-         >>> frame.yZx is the axis system (-y, +z, -x)"""
+         >>> anchor.yZx is the axis system (-y, +z, -x)"""
         if len(name) != 3:
             raise AttributeError(f'There is no attribute named: {name}')
         axes = {
@@ -667,47 +667,47 @@ class Frame(Saveable):
             'z': -self._z,
             'Z': self._z
         }
-        return Frame(self.c0, *[axes[c] for c in name])
+        return Anchor(self.c0, *[axes[c] for c in name])
     
-    def __add__(self, other: Frame) -> Frame:
-        """ Adds two frames by adding their origins and keeping the axis of self.
+    def __add__(self, other: Anchor) -> Anchor:
+        """ Adds two anchors by adding their origins and keeping the axis of self.
 
         Args:
-            other (Frame): The other frame to add
+            other (Anchor): The other anchor to add
         """
-        return Frame(self.c0 + other.c0, self._x, self._y, self._z)
+        return Anchor(self.c0 + other.c0, self._x, self._y, self._z)
     
     def __str__(self) -> str:
-        return f"Frame(c0={self.c0}, x={self._x}, y={self._y}, z={self._z})"
+        return f"Anchor(c0={self.c0}, x={self._x}, y={self._y}, z={self._z})"
     @property
-    def tx(self) -> Frame:
-        """ Same frame rotated around its positive X-axis 180 degrees"""
-        return Frame(self.c0, self._x, -self._y, -self._z)
+    def tx(self) -> Anchor:
+        """ Same anchor rotated around its positive X-axis 180 degrees"""
+        return Anchor(self.c0, self._x, -self._y, -self._z)
     
     @property
-    def ty(self) -> Frame:
-        """ Same frame rotated around its positive Y-axis 180 degrees"""
-        return Frame(self.c0, -self._x, self._y, -self._z)
+    def ty(self) -> Anchor:
+        """ Same anchor rotated around its positive Y-axis 180 degrees"""
+        return Anchor(self.c0, -self._x, self._y, -self._z)
     
     @property
-    def tz(self) -> Frame:
-        """ Same frame rotated around its positive Z-axis 180 degrees"""
-        return Frame(self.c0, -self._x, -self._y, self._z)
+    def tz(self) -> Anchor:
+        """ Same anchor rotated around its positive Z-axis 180 degrees"""
+        return Anchor(self.c0, -self._x, -self._y, self._z)
     
     @property
-    def mx(self) -> Frame:
-        """ Same frame mirrored in its X-axis"""
-        return Frame(self.c0, -self._x, self._y, self._z)
+    def mx(self) -> Anchor:
+        """ Same achor mirrored in its X-axis"""
+        return Anchor(self.c0, -self._x, self._y, self._z)
     
     @property
-    def my(self) -> Frame:
-        """ Same frame mirrored in its Y-axis"""
-        return Frame(self.c0, self._x, -self._y, self._z)
+    def my(self) -> Anchor:
+        """ Same anchor mirrored in its Y-axis"""
+        return Anchor(self.c0, self._x, -self._y, self._z)
     
     @property
-    def mz(self) -> Frame:
-        """ Same frame mirrored in its Z-axis"""
-        return Frame(self.c0, self._x, self._y, -self._z)
+    def mz(self) -> Anchor:
+        """ Same anchor mirrored in its Z-axis"""
+        return Anchor(self.c0, self._x, self._y, -self._z)
     
     def __iter__(self):
         yield self.c0[0]
@@ -722,7 +722,7 @@ class Frame(Saveable):
         return T
     
     def cs(self) -> CoordinateSystem:
-        """ Creates a CoordinateSystem object at this frame with the given axis as Z-axis.
+        """ Creates a CoordinateSystem object at this anchor with the given axis as Z-axis.
 
         Args:
             axis (tuple | np.ndarray | Axis): The Z-axis direction
@@ -732,9 +732,9 @@ class Frame(Saveable):
         """
         return CoordinateSystem(self._x, self._y, self._z, self.c0)
     
-    def compute_affine(self, other: Frame) -> np.ndarray:
+    def compute_affine(self, other: Anchor) -> np.ndarray:
         """
-        Compute affine transform mapping this frame to `other`.
+        Compute affine transform mapping this anchor to `other`.
         Returns a 4x4 homogeneous transformation matrix.
         """
         T_self = self.as_homogeneous()

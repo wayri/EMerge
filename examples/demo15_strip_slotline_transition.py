@@ -37,7 +37,7 @@ Rcirc = 8       # Readius of the open circuit circle.
 m = em.Simulation('Transition', loglevel='INFO')
 m.check_version("2.1.1")
 # Next we create the PCB designer class instance.
-pcb = em.geo.PCB(th, mm, material=em.lib.DIEL_RO4003C)
+pcb = em.geo.PCBNew(th, mm, material=em.lib.DIEL_RO4003C)
 
 # We can use this function to compute the microstripline impedance. Right now (version 1.1) it just assumes top vs bottom layer.
 w0 = pcb.calc.z0(50)
@@ -130,6 +130,11 @@ m.mw.bc.AbsorbingBoundary(em.select(air_top.top, air_bottom.bottom))
 # We set show_mesh to True so we can see the progress of refinement for the purspose of this example.
 # This halts the simulation so we have to click away the window to proceed.
 # You can see that more nodes are added around the signal traces because the E-field error is highest
+
+# In this simulation setup, refinement does not converge due to the coarse starting point and the limited number of steps.
+# This limitation is mostly set to make sure that users do not require a PC with large amounts of RAM to run this simulation.
+# You may increase the number of steps at will to make the simulation converge.
+
 m.adaptive_mesh_refinement(max_steps=8, frequency=5.5e9)
 
 # We can view the improvement in the refined mesh.

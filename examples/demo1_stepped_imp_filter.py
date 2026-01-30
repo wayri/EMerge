@@ -35,7 +35,7 @@ m.check_version("2.1.1") # Checks version compatibility.
 # supply it with a thickness, the desired air-box height, the units at which we supply
 # the dimensions and the PCB material.
 
-layouter = em.geo.PCB(th, unit=mil, material=pcbmat, layers=3)
+layouter = em.geo.PCBNew(th, unit=mil, material=pcbmat, layers=3)
 
 # We will route our PCB using the "method chaining" syntax. First we call the .new() method
 # to start a new trace. This will returna StripPath object on which we may call methods that
@@ -117,9 +117,11 @@ plot_sp(f, [S11, S21], labels=['S11','S21'], dblim=[-40,6], logx=True)
 
 # We can also supersample our data by constructing a model using the Vector Fitting algorithm
 
-f = np.linspace(0.2e9, 8e9, 2001)
-S11 = gritted_data.model_S(1,1,f)
-S21 = gritted_data.model_S(2,1,f)
+# This will initialize a sub-sampled frequency axis
+
+f = gritted_data.dense_f(2001)   # Dense frequencies are stored internally
+S11 = gritted_data.model_S(1,1)  # The dense frequency points are available from the .dense_f() call.
+S21 = gritted_data.model_S(2,1)
 
 smith(S11, labels='S11', f=f)
 

@@ -238,6 +238,7 @@ class PortProperties(Saveable):
     Z0: float | complex | None = None
     Pout: float | None = None
     mode_number: int = 1
+    smat_index: int | float = 1
 
 class MWData(Saveable):
     scalar: BaseDataset[MWScalar, MWScalarNdim]
@@ -272,8 +273,7 @@ class MWData(Saveable):
             ffsets.append(field.farfield_3d(face, thetas, phis, origin, syms))
         
         export_ffdata(filename, thetas, phis, np.array(freq_data), ffsets, precision=precision)
-        
-        
+              
 class _EHSign(Saveable):
     """A small class to manage the sign of field components when computing the far-field with Stratton-Chu
     """
@@ -334,9 +334,9 @@ class MWField(Saveable):
         self._dsig: np.ndarray = None
         self.freq: float = None
         self.basis: FEMBasis = None
-        self._fields: dict[int, np.ndarray] = dict()
+        self._fields: dict[int | int, np.ndarray] = dict()
         self._mode_field: np.ndarray = None
-        self.excitation: dict[int, complex] = dict()
+        self.excitation: dict[int | float, complex] = dict()
         self.Nports: int = None
         self.port_modes: list[PortProperties] = []
         self.Ex: np.ndarray = None
@@ -352,12 +352,14 @@ class MWField(Saveable):
     def add_port_properties(self, 
                             port_number: int,
                             mode_number: int,
+                            smat_index: int | float,
                             k0: float,
                             beta: float,
                             Z0: float | complex | None,
                             Pout: float) -> None:
         self.port_modes.append(PortProperties(port_number=port_number,
                                               mode_number=mode_number,
+                                              smat_index=smat_index,
                                               k0 = k0,
                                               beta=beta,
                                               Z0=Z0,
@@ -375,14 +377,14 @@ class MWField(Saveable):
     def _field(self) -> np.ndarray:
         if self._mode_field is not None:
             return self._mode_field
-        return sum([self.excitation[mode.port_number]*self._fields[mode.port_number] for mode in self.port_modes]) # type: ignore
+        return sum([self.excitation[mode.smat_index]*self._fields[mode.smat_index] for mode in self.port_modes]) # type: ignore
     
     def set_field_vector(self) -> None:
         """Defines the default excitation coefficients for the current dataset as an excitation of only port 1."""
         self.excitation = {key: 0.0 for key in self._fields.keys()}
-        self.excitation[self.port_modes[0].port_number] = 1.0 + 0j
+        self.excitation[self.port_modes[0].smat_index] = 1.0 + 0j
 
-    def excite_port(self, number: int, excitation: complex = 1.0 + 0.0j) -> None:
+    def excite_port(self, number: int | float, excitation: complex = 1.0 + 0.0j) -> None:
         """Excite a single port provided by a given port number
 
         Args:
@@ -390,7 +392,7 @@ class MWField(Saveable):
             coefficient (complex): The port excitation. Defaults to 1.0 + 0.0j
         """
         self.excitation = {key: 0.0 for key in self._fields.keys()}
-        self.excitation[self.port_modes[number-1].port_number] = excitation
+        self.excitation[number] = excitation
     
     def set_excitations(self, *excitations: complex) -> None:
         """Set bulk port excitations by an ordered array of excitation coefficients.
@@ -399,8 +401,8 @@ class MWField(Saveable):
             *complex: A sequence of complex numbers
         """
         self.excitation = {key: 0.0 for key in self._fields.keys()}
-        for iport, coeff in enumerate(excitations):
-            self.excitation[self.port_modes[iport].port_number] = coeff
+        for imode, coeff in enumerate(excitations):
+            self.excitation[self.port_modes[imode].smat_index] = coeff
     
     def combine_ports(self, p1: int, p2: int) -> MWField:
         """Combines ports p1 and p2 into a cifferential and common mode port respectively.
@@ -928,7 +930,7 @@ class MWScalar(Saveable):
         self.beta: np.ndarray = None
         self.Z0: np.ndarray = None
         self.Pout: np.ndarray = None
-        self._portmap: dict[int, float|int] = dict()
+        self._portmap: dict[int | float, int] = dict()
         self._portnumbers: list[int | float] = []
         self.port_modes: list[PortProperties] = []
 
@@ -946,31 +948,32 @@ class MWScalar(Saveable):
         self.beta = np.zeros((i,), dtype=np.complex128)
 
         
-    def write_S(self, i1: int | float, i2: int | float, value: complex) -> None:
-        self.Sp[self._portmap[i1], self._portmap[i2]] = value
+    def write_S(self, i: int | float, j: int | float, value: complex) -> None:
+        self.Sp[self._portmap[i], self._portmap[j]] = value
 
-    def S(self, i1: int, i2: int) -> complex:
+    def S(self, i: int | float, j: int | float) -> complex:
         """Return the S-parameter corresponding to the given set of indices:
 
         S11 = obj.S(1,1)
 
         Args:
-            i1 (int): The first port index
-            i2 (int): The second port index
+            i (int | float): The first port index
+            j (int | float): The second port index
 
         Returns:
             complex: The S-parameter
         """
-        return self.Sp[self._portmap[i1], self._portmap[i2]]
+        return self.Sp[self._portmap[i], self._portmap[j]]
     
     def add_port_properties(self, 
                             port_number: int,
                             mode_number: int,
+                            smat_index: int | float,
                             k0: float,
                             beta: float,
                             Z0: float | complex,
                             Pout: float) -> None:
-        i = self._portmap[port_number]
+        i = self._portmap[smat_index]
         self.beta[i] = beta
         self.Z0[i] = Z0
         self.Pout[i] = Pout
@@ -986,14 +989,28 @@ class MWScalarNdim(Saveable):
         self.beta: np.ndarray = None
         self.Z0: np.ndarray = None
         self.Pout: np.ndarray = None
-        self._portmap: dict[int, float|int] = dict()
+        self._portmap: dict[int | float, int] = dict()
         self._portnumbers: list[int | float] = []
+        self._dense_frequencies: np.ndarray = None
 
     def dense_f(self, N: int) -> np.ndarray:
-        return np.linspace(np.min(self.freq), np.max(self.freq), N)
+        self._dense_frequencies = np.linspace(np.min(self.freq), np.max(self.freq), N)
+        return self._dense_frequencies
     
-    def S(self, i1: int, i2: int) -> np.ndarray:
-        return self.Sp[...,self._portmap[i1], self._portmap[i2]]
+    def S(self, i: int | float, j: int | float) -> np.ndarray:
+        """Get the S-parameter for the given port(port mode) index.
+        
+        Single mode ports are numbered like: 1, 2, 3 etc
+        Ports with multiple modes are numbered. 1.1, 1.2, 1.3 etc
+
+        Args:
+            i (int | float): The i-index
+            j (int | float): The j-index
+
+        Returns:
+            np.ndarray: The resultant S-parameters
+        """
+        return self.Sp[...,self._portmap[i], self._portmap[j]]
     
     def combine_ports(self, p1: int, p2: int) -> MWScalarNdim:
         """Combine ports p1 and p2 into a differential and common mode port respectively.
@@ -1080,26 +1097,33 @@ class MWScalarNdim(Saveable):
         return f, S
 
     def model_S(self, i: int, j: int, 
-            freq: np.ndarray, 
+            freq: np.ndarray | None = None, 
             Npoles: int | Literal['auto'] = 'auto', 
             inc_real: bool = False,
             maxpoles: int = 30) -> np.ndarray:
         """Returns an S-parameter model object at a dense frequency range.
         This method uses vector fitting inside the datasets frequency points to determine a model for the linear system.
-
+        If no frequency array is provided the .dense_f(NF) method should have been called.
+        
         Args:
             i (int): The first S-parameter index
             j (int): The second S-parameter index
-            freq (np.ndarray): The frequency sample points
+            freq (np.ndarray | optional): The frequency sample points. Defaults to None
             Npoles (int | 'auto', optional): The number of poles to use (approx 2x divice order). Defaults to 10.
             inc_real (bool, optional): Wether to allow for a real-pole. Defaults to False.
 
         Returns:
             SparamModel: The SparamModel object
         """
+        if freq is None:
+            if self._dense_frequencies is None:
+                raise ValueError('No dense frequency space is defined. Either provide a dense frequency grid or call the .dense_f() method.')
+            else:
+                freq = self._dense_frequencies
+        
         return SparamModel(self.freq, self.S(i,j), n_poles=Npoles, inc_real=inc_real, maxpoles=maxpoles)(freq)
 
-    def model_Smat(self, frequencies: np.ndarray,
+    def model_Smat(self, frequencies: np.ndarray | None = None,
                         Npoles: int = 10,
                         inc_real: bool = False) -> np.ndarray:
         """Generates a full S-parameter matrix on the provided frequency points using the Vector Fitting algorithm.
@@ -1114,6 +1138,12 @@ class MWScalarNdim(Saveable):
         Returns:
             np.ndarray: The (Nf,Np,Np) S-parameter matrix
         """
+        if frequencies is None:
+            if self._dense_frequencies is None:
+                raise ValueError('No dense frequency space is defined. Either provide a dense frequency grid or call the .dense_f() method.')
+            else:
+                frequencies = self._dense_frequencies
+        
         Nports = len(self._portmap)
         nfreq = frequencies.shape[0]
 
@@ -1131,7 +1161,8 @@ class MWScalarNdim(Saveable):
                             Z0ref: float | None = None,
                             format: Literal['RI','MA','DB'] = 'RI',
                             custom_comments: list[str] | None = None,
-                            funit: Literal['HZ','KHZ','MHZ','GHZ'] = 'GHZ'):
+                            funit: Literal['HZ','KHZ','MHZ','GHZ'] = 'GHZ',
+                            dense_freq: np.ndarray | None = None):
         """Export the S-parameter data to a touchstone file
 
         This function assumes that all ports are numbered in sequence 1,2,3,4... etc with
@@ -1146,18 +1177,29 @@ class MWScalarNdim(Saveable):
             format (Literal[DB, RI, MA]): The dataformat used in the touchstone file.
             custom_comments : list[str], optional. List of custom comment strings to add to the touchstone file header.
                                                     Each string will be prefixed with "! " automatically.
+            dense_freq (np.ndarray | optional): An optional dense interpolation frequency range
         """
         
         logger.info(f'Exporting S-data to {filename}')
         Nports = len(self._portmap)
-        freqs = self.freq
-
-        Smat = np.zeros((len(freqs),Nports,Nports), dtype=np.complex128)
         
-        for i in range(1,Nports+1):
-            for j in range(1,Nports+1):
-                S = self.S(i,j)
-                Smat[:,i-1,j-1] = S
+        
+        if dense_freq is None:
+            freqs = self.freq
+            Smat = np.zeros((len(freqs),Nports,Nports), dtype=np.complex128)
+            
+            for i in range(1,Nports+1):
+                for j in range(1,Nports+1):
+                    S = self.S(i,j)
+                    Smat[:,i-1,j-1] = S
+        else:
+            freqs = dense_freq
+            Smat = np.zeros((len(freqs),Nports,Nports), dtype=np.complex128)
+            
+            for i in range(1,Nports+1):
+                for j in range(1,Nports+1):
+                    S = self.model_S(i,j,dense_freq)
+                    Smat[:,i-1,j-1] = S
         
         self.save_smatrix(filename, Smat, freqs, format=format, Z0ref=Z0ref, custom_comments=custom_comments, funit=funit)
 

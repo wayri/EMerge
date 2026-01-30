@@ -28,7 +28,13 @@ class FileBasedPCB(PCB):
     Args:
         PCB (_type_): _description_
     """
-    def layer_from_file(self, layer: int, filename: str, res_mm: float = 0.01, n_circ_segments: int = 8, segment_size_mm: float | None = None) -> GeoSurface:
+    def layer_from_file(self, layer: int, filename: str, 
+                        res_mm: float = 0.01, 
+                        n_circ_segments: int = 8, 
+                        segment_size_mm: float | None = None, 
+                        min_incl_angle: float = 2.0,
+                        min_remove_angle: float = 10.0,
+                        simplify: bool = True) -> GeoSurface:
         """Create a layer from a Gerber file.
 
         Args:
@@ -37,11 +43,14 @@ class FileBasedPCB(PCB):
             res_mm (float, optional): The resolution in mm. Defaults to 0.01.
             n_circ_segments (int, optional): The number of circular segments. Defaults to 8.
             segment_size_mm (float | None, optional): The size of the segments in mm. Defaults to None.
+            min_incl_angle (float, optional): The polygon section angle below which points are removed in degrees. Defaults to 1.0
+            min_remove_angle (float, optional): The polygon section angle below which close points are considered for removal in degrees. Defaults to 10.0
+            simplify (bool | optional): If the geometries should be simplified. Defaults to True.
 
         Returns:
             GeoSurface: The generated surface.
         """
-        gerber = GerberLayer(filename, 0.01, 8, segment_size_mm, cs=self.cs, ignore_via_pads=True)
+        gerber = GerberLayer(filename, res_mm, n_circ_segments, segment_size_mm, cs=self.cs, ignore_via_pads=True, min_incl_angle=min_incl_angle, min_remove_angle=min_remove_angle, simplify=simplify)
         z = self.z(layer)*self.unit
         surf = gerber.flatten(z)
         

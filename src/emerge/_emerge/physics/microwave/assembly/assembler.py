@@ -188,10 +188,10 @@ class Assembler:
 
     def assemble_freq_matrix(self, 
                              field: Nedelec2, 
-                            materials: list[Material],
-                            bcs: list[BoundaryCondition],
-                            frequency: float,
-                            cache_matrices: bool = False) -> SimJob:
+                             materials: list[Material],
+                             bcs: list[BoundaryCondition],
+                             frequency: float,
+                             cache_matrices: bool = False) -> SimJob:
         """Assembles the frequency domain FEM matrix
 
         Args:
@@ -208,7 +208,7 @@ class Assembler:
         """
 
         from .curlcurl import tet_mass_stiffness_matrices
-        from .robinbc import assemble_robin_bc, assemble_robin_bc_excited
+        from .robinbc import assemble_robin_bc, assemble_robin_bc_bvec
         from ....mth.optimized import gaus_quad_tri
         from ....mth.pairing import pair_coordinates
         from .periodicbc import gen_periodic_matrix
@@ -263,8 +263,11 @@ class Assembler:
         periodic_bcs: list[Periodic] = [bc for bc in bcs if isinstance(bc, Periodic)]
 
         # PREDEFINE THE FORCING VECTOR CONTAINER
-        b = np.zeros((E.shape[0],)).astype(np.complex128)
-        port_vectors = {port.port_number: np.zeros((E.shape[0],)).astype(np.complex128) for port in port_bcs}
+        b = np.zeros((E.shape[0],), dtype=np.complex128)
+        port_vectors: dict[int|float, np.ndarray] = {}
+        for port in sorted(port_bcs, key=lambda x: x.port_number):
+            for mat_index, mode_nr in port._iter_port_numbers():
+                port_vectors[mat_index] = np.zeros((E.shape[0],), dtype=np.complex128)
         
 
         ############################################################
@@ -308,7 +311,7 @@ class Assembler:
 
 
         ############################################################
-        #                     ROBIN BOUNDARY CONDITIONS            #
+        #                 ROBIN BOUNDARY CONDITIONS                #
         ############################################################
 
         if len(robin_bcs) > 0:
@@ -322,21 +325,19 @@ class Assembler:
                     face_tags = [tag,]
 
                     tri_ids = mesh.get_triangles(face_tags)
-                    nodes = mesh.get_nodes(face_tags)
                     edge_ids = list(mesh.tri_to_edge[:,tri_ids].flatten())
 
                     gamma = bc.get_gamma(K0)
                     logger.trace(f'..robin bc γ={gamma:.3f}')
-
-                    def Ufunc(x,y,z): 
-                        return bc.get_Uinc(x,y,z,K0)
+                    
+                    Bempty = assemble_robin_bc(field, Bempty, tri_ids, gamma) # type: ignore
                     
                     if bc._include_force and bc.driven:
-                        Bempty, b_p = assemble_robin_bc_excited(field, Bempty, tri_ids, Ufunc, gamma, gauss_points) # type: ignore
-                        port_vectors[bc.port_number] += b_p # type: ignore
-                        logger.trace(f'..included force vector term with norm {np.linalg.norm(b_p):.3f}')
-                    else:
-                        Bempty = assemble_robin_bc(field, Bempty, tri_ids, gamma) # type: ignore
+                        for number, Ufunc in bc._iter_modes(K0):
+                            b_p = assemble_robin_bc_bvec(field, tri_ids, Ufunc, gauss_points) # type: ignore
+                            port_vectors[number] += b_p # type: ignore
+                            logger.trace(f'..included force vector term with norm {np.linalg.norm(b_p):.3f}')
+                    
                     
                     ## Second order absorbing boundary correction
                     if bc._isabc:

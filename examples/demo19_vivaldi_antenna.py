@@ -2,7 +2,6 @@ import emerge as em
 import numpy as np
 from emerge.plot import plot_sp, plot_ff_polar, smith
 
-from emerge import EMergeTheme
 """ SLOTTED VIVALDI ANTENNA
 
 In this demo we will look at the design of a slotted Vivaldi antenna in EMerge and how it can be setup.
@@ -105,7 +104,7 @@ slots = em.geo.subtract(slots, exp_taper_dialated)
 disc = em.geo.Disc((-Radius/2+1*mm,0,-th*mm), Radius/2, (0,0,1))
 
 # Our PCB is actually quite simple, it only contains the bottom Ground plane and upper feed trace.
-pcbl = em.geo.PCB(th, mm, material=em.lib.DIEL_FR4)
+pcbl = em.geo.PCBNew(th, mm, material=em.lib.DIEL_FR4)
 # We compute the trace width for 50 ohms.
 w0 = pcbl.calc.z0(50)
 # Next we start a new trace at xy=(2mm, -10mm), we store this as our input port and move 10.5mm forwards just beyond where the taper slot is.
@@ -130,8 +129,7 @@ pcbl.set_bounds(xmin=-25, xmax = 70, ymin=-30, ymax = 30)
 pcb = pcbl.generate_pcb() # we generate the PCB delectricum
 ground = pcbl.plane(-th) # And ground
 
-# and view the entire geometry
-m.view()
+m.view(use_gmsh=True)
 
 # We subtract the exponential taper, disc and slots from the ground plane.
 ground = em.geo.subtract(ground, exp_taper)
@@ -183,6 +181,8 @@ ff_data = data.field.find(freq=6e9).farfield_2d((1,0,0),(0,0,1), abc)
 plot_ff_polar(ff_data.ang, ff_data.normE/em.EISO, dB=True, title='Farfield E-plane @ 6GHz')
 
 # Finally we create a simple field plot.
+ff_data = data.field.find(freq=6e9).farfield_3d(abc)
 m.display.add_objects(*m.all_geos())
 m.display.add_field(data.field[1].cutplane(0.8*mm, z=-th*mm/2).scalar('Ey','real'), symmetrize=True)
+m.display.add_field(ff_data.surfplot('normE', dB=True, dBfloor=-20, offset=(90*mm, 0, 0), rmax=40*mm))
 m.display.show()

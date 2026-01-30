@@ -14,7 +14,7 @@ model = em.Simulation('DiffCommon')  # simulation container
 model.check_version('2.1.1') # Checks version compatibility.
 
 # PCB stack: 1 mm substrate, RO3003 dielectric, 0.05 mm copper thickness, thick traces enabled
-pcb = em.geo.PCB(1, mm, material=em.lib.DIEL_RO3003, trace_thickness=0.05*mm, thick_traces=True)
+pcb = em.geo.PCBNew(1, mm, material=em.lib.DIEL_RO3003, trace_thickness=0.05*mm, thick_traces=True)
 
 w0 = pcb.calc.z0(50)  # compute trace width for 50 Ω single-ended impedance
 

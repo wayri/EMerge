@@ -21,7 +21,7 @@ from ...simstate import SimState
 from ...geometry import GeoObject
 from ...selection import FaceSelection, DomainSelection, EdgeSelection, Selection, encode_data
 from ...physics.microwave.microwave_bc import PortBC, ModalPort
-from ...cs import Frame
+from ...cs import Anchor
 
 from emsutil.pyvista import EMergeDisplay, setdefault, cmap_names, _AnimObject
 import numpy as np
@@ -104,6 +104,9 @@ class PVDisplay(EMergeDisplay):
             pv.UnstructuredGrid: The unstrutured grid object
         """
         edge_ids = self._mesh.domain_edges(obj.dimtags)
+        if len(edge_ids) == 0:
+            raise ValueError(f'Cannot plot {obj}')
+            return None
         nedges = edge_ids.shape[0]
         cells = np.zeros((nedges,3), dtype=np.int64)
         cells[:,1:] = self._mesh.edges[:,edge_ids].T
@@ -141,11 +144,12 @@ class PVDisplay(EMergeDisplay):
     #                        EMERGE METHODS                    #
     ############################################################
 
-    def add_frames(self, frames: list[Frame], size: float = 1.0) -> None:
-        xaxs = [f._x for f in frames]
-        yaxs = [f._y for f in frames]
-        zaxs = [f._z for f in frames]
-        c0s = [f.c0 for f in frames]
+    def add_anchors(self, anchors: list[Anchor], size: float = 1.0) -> None:
+        """Adds a list of anchors to display in the current view"""
+        xaxs = [f._x for f in anchors]
+        yaxs = [f._y for f in anchors]
+        zaxs = [f._z for f in anchors]
+        c0s = [f.c0 for f in anchors]
         
         x,y,z = zip(*c0s)
         xx, xy, xz = zip(*xaxs)
@@ -192,8 +196,12 @@ class PVDisplay(EMergeDisplay):
                       color=obj.color_rgb, 
                       texture=texture)
 
-        self._plot.add_mesh(self._volume_edges(_select(obj)), line_width=self.set.theme.geo_edge_width, color=self.set.theme.geo_edge_color, show_edges=True)
-
+        mesh_obj = self._volume_edges(_select(obj))
+        if mesh_obj is not None:
+            self._plot.add_mesh(mesh_obj, line_width=self.set.theme.geo_edge_width, color=self.set.theme.geo_edge_color, show_edges=True)
+        else:
+            return
+        
         if label:
             points = []
             labels = []
@@ -272,14 +280,13 @@ class PVDisplay(EMergeDisplay):
             
         if k0 is None:
             if isinstance(port, ModalPort):
-                k0 = port.get_mode(0).k0
+                k0 = port.get_modes(0)[0].k0
             else:
                 k0 = 1
         
-        if isinstance(mode_number, int):
-            port.selected_mode = mode_number
-        
-        F = port.port_mode_3d_global(xf,yf,zf,k0, which=field)
+        if mode_number is None:
+            mode_number = 1
+        F = port.port_mode_3d_global(xf,yf,zf,k0, which=field, mode_nr=mode_number)
 
         Fx = F[0,:].reshape(X.shape).T
         Fy = F[1,:].reshape(X.shape).T
@@ -301,93 +308,93 @@ class PVDisplay(EMergeDisplay):
         actor = self._plot.add_arrows(np.array([xf,yf,zf]).T, Emag)
         self._data_sets.append(actor.mapper.dataset)
         
-    def add_surf(self, 
-                 x: np.ndarray,
-                 y: np.ndarray,
-                 z: np.ndarray,
-                 field: np.ndarray,
-                 scale: Literal['lin','log','symlog'] = 'lin',
-                 cmap: cmap_names | None = None,
-                 clim: tuple[float, float] | None = None,
-                 opacity: float = 1.0,
-                 symmetrize: bool = False,
-                 _fieldname: str | None = None,
-                 **kwargs,) -> pv.DataSet:
-        """Add a surface plot to the display
-        The X,Y,Z coordinates must be a 2D grid of data points. The field must be a real field with the same size.
+    # def add_surf(self, 
+    #              x: np.ndarray,
+    #              y: np.ndarray,
+    #              z: np.ndarray,
+    #              field: np.ndarray,
+    #              scale: Literal['lin','log','symlog'] = 'lin',
+    #              cmap: cmap_names | None = None,
+    #              clim: tuple[float, float] | None = None,
+    #              opacity: float = 1.0,
+    #              symmetrize: bool = False,
+    #              _fieldname: str | None = None,
+    #              **kwargs,) -> pv.DataSet:
+    #     """Add a surface plot to the display
+    #     The X,Y,Z coordinates must be a 2D grid of data points. The field must be a real field with the same size.
 
-        Args:
-            x (np.ndarray): The X-grid array
-            y (np.ndarray): The Y-grid array
-            z (np.ndarray): The Z-grid array
-            field (np.ndarray): The scalar field to display
-            scale (Literal["lin","log","symlog"], optional): The colormap scaling¹. Defaults to 'lin'.
-            cmap (cmap_names, optional): The colormap. Defaults to 'coolwarm'.
-            clim (tuple[float, float], optional): Specific color limits (min, max). Defaults to None.
-            opacity (float, optional): The opacity of the surface. Defaults to 1.0.
-            symmetrize (bool, optional): Wether to force a symmetrical color limit (-A,A). Defaults to True.
+    #     Args:
+    #         x (np.ndarray): The X-grid array
+    #         y (np.ndarray): The Y-grid array
+    #         z (np.ndarray): The Z-grid array
+    #         field (np.ndarray): The scalar field to display
+    #         scale (Literal["lin","log","symlog"], optional): The colormap scaling¹. Defaults to 'lin'.
+    #         cmap (cmap_names, optional): The colormap. Defaults to 'coolwarm'.
+    #         clim (tuple[float, float], optional): Specific color limits (min, max). Defaults to None.
+    #         opacity (float, optional): The opacity of the surface. Defaults to 1.0.
+    #         symmetrize (bool, optional): Wether to force a symmetrical color limit (-A,A). Defaults to True.
         
-        (¹): lin: f(x)=x, log: f(x)=log₁₀(|x|), symlog: f(x)=sgn(x)·log₁₀(1+|x·ln(10)|)
-        """
+    #     (¹): lin: f(x)=x, log: f(x)=log₁₀(|x|), symlog: f(x)=sgn(x)·log₁₀(1+|x·ln(10)|)
+    #     """
         
-        grid = pv.StructuredGrid(x,y,z)
-        field_flat = field.flatten(order='F')
+    #     grid = pv.StructuredGrid(x,y,z)
+    #     field_flat = field.flatten(order='F')
         
-        if scale=='log':
-            T = lambda x: np.log10(np.abs(x+1e-12))
-        elif scale=='symlog':
-            T = lambda x: np.sign(x) * np.log10(1 + np.abs(x*np.log(10)))
-        else:
-            T = lambda x: x
+    #     if scale=='log':
+    #         T = lambda x: np.log10(np.abs(x+1e-12))
+    #     elif scale=='symlog':
+    #         T = lambda x: np.sign(x) * np.log10(1 + np.abs(x*np.log(10)))
+    #     else:
+    #         T = lambda x: x
         
-        static_field = T(np.real(field_flat))
+    #     static_field = T(np.real(field_flat))
         
-        if _fieldname is None:
-            name = 'anim'+str(self._ctr)
-        else:
-            name = _fieldname
-        self._ctr += 1
+    #     if _fieldname is None:
+    #         name = 'anim'+str(self._ctr)
+    #     else:
+    #         name = _fieldname
+    #     self._ctr += 1
         
-        has_nan = np.any(np.isnan(static_field))
-        if has_nan:
-            nan_opacity = 0.0
-        else:
-            nan_opacity = 1.0
+    #     has_nan = np.any(np.isnan(static_field))
+    #     if has_nan:
+    #         nan_opacity = 0.0
+    #     else:
+    #         nan_opacity = 1.0
             
-        grid[name] = static_field
+    #     grid[name] = static_field
         
-        grid_no_nan = grid.threshold(scalars=name)
+    #     grid_no_nan = grid.threshold(scalars=name)
         
-        default_cmap = self.set.theme.default_amplitude_cmap
-        # Determine color limits
-        if clim is None:
-            if self._cbar_lim is not None:
-                clim = self._cbar_lim
-            else:
-                fmin = np.nanmin(static_field)
-                fmax = np.nanmax(static_field)
-                clim = (fmin, fmax)
+    #     default_cmap = self.set.theme.default_amplitude_cmap
+    #     # Determine color limits
+    #     if clim is None:
+    #         if self._cbar_lim is not None:
+    #             clim = self._cbar_lim
+    #         else:
+    #             fmin = np.nanmin(static_field)
+    #             fmax = np.nanmax(static_field)
+    #             clim = (fmin, fmax)
         
-        if symmetrize:
-            lim = max(abs(clim[0]), abs(clim[1]))
-            clim = (-lim, lim)
-            default_cmap = self.set.theme.default_wave_cmap
+    #     if symmetrize:
+    #         lim = max(abs(clim[0]), abs(clim[1]))
+    #         clim = (-lim, lim)
+    #         default_cmap = self.set.theme.default_wave_cmap
         
-        if cmap is None:
-            cmap = default_cmap
-        else:
-            cmap = self.set.theme.parse_cmap_name(cmap)
+    #     if cmap is None:
+    #         cmap = default_cmap
+    #     else:
+    #         cmap = self.set.theme.parse_cmap_name(cmap)
             
-        kwargs = setdefault(kwargs, cmap=cmap, clim=clim, opacity=opacity, pickable=False, multi_colors=True, nan_opacity=nan_opacity)
-        actor = self._wrap_plot(grid_no_nan, scalars=name, scalar_bar_args=self._cbar_args, **kwargs)
+    #     kwargs = setdefault(kwargs, cmap=cmap, clim=clim, opacity=opacity, pickable=False, multi_colors=True, nan_opacity=nan_opacity)
+    #     actor = self._wrap_plot(grid_no_nan, scalars=name, scalar_bar_args=self._cbar_args, **kwargs)
         
-        if self._animate_next:
-            def on_update(obj: _AnimObject, phi: complex):
-                field_anim = obj.T(np.real(obj.field * phi))
-                obj.grid[name] = field_anim
-                obj.fgrid[name] = obj.grid.threshold(scalars=name)[name]
-                #obj.fgrid replace with thresholded scalar data.
-            self._objs.append(_AnimObject(field_flat, T, grid, grid_no_nan, actor, on_update))
-            self._animate_next = False
-        self._reset_cbar()
-        return grid_no_nan
+    #     if self._animate_next:
+    #         def on_update(obj: _AnimObject, phi: complex):
+    #             field_anim = obj.T(np.real(obj.field * phi))
+    #             obj.grid[name] = field_anim
+    #             obj.fgrid[name] = obj.grid.threshold(scalars=name)[name]
+    #             #obj.fgrid replace with thresholded scalar data.
+    #         self._objs.append(_AnimObject(field_flat, T, grid, grid_no_nan, actor, on_update))
+    #         self._animate_next = False
+    #     self._reset_cbar()
+    #     return grid_no_nan

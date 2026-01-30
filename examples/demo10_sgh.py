@@ -104,7 +104,7 @@ ff_data = data.field[0].farfield_2d(
     (-90, 90), syms=['Ez','Hy'], origin=(0,0,0)
 )
 
-plot_ff(ff_data.ang * 180/np.pi, ff_data.normE/em.lib.EISO, dB=True, ylabel='Gain [dBi]')
+plot_ff(ff_data.ang * 180/np.pi, ff_data.gain.norm, dB=True, ylabel='Gain [dBi]')
 # Normalize to free-space impedance and convert to dB
 
 m.display.add_object(horn_in, opacity=0.1)

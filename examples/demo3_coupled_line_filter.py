@@ -52,7 +52,6 @@ pcb = em.geo.PCB(th, unit=mil, material=mat)
 # label input port
 pcb.new(0, 140, w0, (1, 0))['p1'] \
     .straight(l0) \
-    .turn(0) \
     .straight(l1 * 0.8) \
     .straight(l1, w1, dy=abs(w1 - w0) / 2) \
     .jump(gap=g1, side='left', reverse=l1 - e) \
@@ -72,7 +71,6 @@ pcb.new(0, 140, w0, (1, 0))['p1'] \
     .straight(l1, w6, dy=abs(w2 - w1) / 2) \
     .jump(gap=g6, side='left', reverse=l1 - e) \
     .straight(l1, w6) \
-    .turn(0) \
     .straight(l1 * 0.8, w0, dy=abs(w1 - w0) / 2) \
     .straight(l0, w0)['p2']          # label output port
 
@@ -132,5 +130,5 @@ model.display.add_portmode(port1, k0=field.k0)
 model.display.add_portmode(port2, k0=field.k0)
 model.display.add_object(diel)
 model.display.add_object(stripline)
-model.display.add_field(field.cutplane(1*mm, z=-0.5*th*mil).scalar('Ez','real'), symmetrize=True)
+model.display.add_field(field.cutplane(0.5*mm, z=-0.5*th*mil).scalar('Ez','real'), symmetrize=True)
 model.display.show()

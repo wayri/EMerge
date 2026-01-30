@@ -15,10 +15,11 @@
 # along with this program; if not, see
 # <https://www.gnu.org/licenses/>.
 
-from .pcb import PCB, PCBLayer
+from .pcb import PCB, PCBLayer, PCBNew
 from .pmlbox import pmlbox
 from .horn import Horn
 from .shapes import Cylinder, CoaxCylinder, Box, XYPlate, HalfSphere, Sphere, Plate, OldBox, Alignment, Cone
-from .operations import subtract, add, embed, remove, rotate, mirror, change_coordinate_system, translate, intersect, unite, expand_surface, stretch, extrude, stick
+from .operations import subtract, add, embed, remove, rotate, mirror, change_coordinate_system, translate, intersect, unite, expand_surface, stretch, extrude, stick, bounding_box
 from .polybased import XYPolygon, GeoPrism, Disc, Curve
 from .step import STEPItems
+from .open_region import open_region, open_pml_region

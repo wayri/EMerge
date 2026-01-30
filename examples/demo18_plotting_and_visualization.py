@@ -44,9 +44,13 @@ sphere.max_meshsize = 2*mm
 
 # The simplest way to view the geometry is to call the "view" method on our simulation object.
 # The view method can use the GMSH viewer or the EMerge PyVista viewer. 
-# As long as there is no mesh yet, EMerge can only use the GMSH viewer.
+# Since version 2.2 you can call view at any time. A quick coarse mesh will be made.
 
 m.view()
+
+# You can also use the traditional GMSH viewer
+
+m.view(use_gmsh=True)
 
 # We commit the geometry and generate the mesh.
 m.commit_geometry()
@@ -242,5 +246,5 @@ dp.add_portmode(my_port, k0=field.k0) # k0 is not needed here but it is often wi
 dp.cbar('H').add_field(griddata.vector('H','real'))
 dp.cbar('E').add_contour(*griddata.scalar('Ex','real').xyzf, symmetrize=True, Nlevels=30)
 dp.cbar('E').add_field(field.cutplane(1*mm, x=0).scalar('Ex','real'), symmetrize=True)
-dp.cbar('E').add_field(ff3d.surfplot('normE','abs',True, rmax=20*mm, offset=(0,0,30*mm)))
+dp.cbar('Eff').add_field(ff3d.surfplot('normE','abs',True, rmax=20*mm, offset=(0,0,30*mm)))
 dp.show()

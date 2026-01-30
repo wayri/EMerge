@@ -17,7 +17,7 @@
 
 from typing import TypeVar, overload
 from ..geometry import GeoSurface, GeoVolume, GeoObject, GeoPoint, GeoEdge, GeoPolygon
-from ..cs import CoordinateSystem, GCS, Frame
+from ..cs import CoordinateSystem, GCS, Anchor
 import gmsh
 import numpy as np
 
@@ -376,8 +376,17 @@ def expand_surface(surface: GeoSurface, distance: float) -> GeoSurface:
     surf = GeoSurface(surfs)
     return surf
 
-def stick(object: GeoObject, p1: Frame , p2: Frame ) -> GeoObject:
-    print(p1, p2)
+def stick(object: GeoObject, p1: Anchor , p2: Anchor ) -> GeoObject:
+    """Glues an objects face anchor to another face anchor point with the appropriate orientation.
+
+    Args:
+        object (GeoObject): The object to stick to something else
+        p1 (Anchor): The main objects achor point to move
+        p2 (Anchor): The anchor point to move it to
+
+    Returns:
+        GeoObject: The moved object
+    """
     affine = p1.compute_affine(p2)
     gmsh.model.occ.affine_transform(object.dimtags, affine.flatten()[:12])
     
@@ -385,3 +394,29 @@ def stick(object: GeoObject, p1: Frame , p2: Frame ) -> GeoObject:
         fp.affine_transform(affine)
     
     return object
+
+def bounding_box() -> tuple[float, float, float, float, float, float]:
+    """Compute the bounding box of the current geometry state
+
+    Returns:
+        tuple[float, float, float, float, float, float]: xmin, xmax, ymin, ymax, zmin, zmax
+    """
+    xmins = []
+    xmaxs = []
+    ymins = []
+    ymaxs = []
+    zmins = []
+    zmaxs = []
+    gmsh.model.occ.synchronize()
+    for dim in (0,1,2,3):
+        for tag in gmsh.model.occ.get_entities(dim):
+
+            xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.occ.getBoundingBox(*tag)
+            xmins.append(xmin)
+            xmaxs.append(xmax)
+            ymins.append(ymin)
+            ymaxs.append(ymax)
+            zmins.append(zmin)
+            zmaxs.append(zmax)
+    
+    return min(xmins), max(xmaxs), min(ymins), max(ymaxs), min(zmins), max(zmaxs)

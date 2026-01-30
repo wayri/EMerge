@@ -183,8 +183,8 @@ class Simulation:
 
     def __exit__(self, type, value, tb):
         """This method no longer does something. It only serves as backwards compatibility."""
-        self.clean()
         self._exit_gmsh()
+        self.clean()
         return False
     
     def _install_signal_handlers(self):
@@ -450,19 +450,6 @@ class Simulation:
         if not self.modelpath.exists():
             self.modelpath.mkdir(parents=True, exist_ok=True)
             logger.info(f"Created directory: {self.modelpath}")
-
-        # Save mesh
-        # mesh_path = self.modelpath / 'mesh.msh'
-        # brep_path = self.modelpath / 'model.brep'
-
-        #gmsh.option.setNumber('Mesh.SaveParametric', 1)
-        #gmsh.option.setNumber('Mesh.SaveAll', 1)
-        #gmsh.model.geo.synchronize()
-        #gmsh.model.occ.synchronize()
-
-        #gmsh.write(str(mesh_path))
-        #gmsh.write(str(brep_path))
-        #logger.info(f"Saved mesh to: {mesh_path}")
 
         # Pack and save data
         dataset = self.state.get_dataset()
