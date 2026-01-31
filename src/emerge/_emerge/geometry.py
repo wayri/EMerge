@@ -367,7 +367,6 @@ class AnchorSet(Saveable):
         """The back bottom edge"""
         self.YZ: Anchor = None
         """The back top edge"""
-        """The top right edge"""
         self.xyz: Anchor = None
         """The front bottom left corner"""
         self.xyZ: Anchor = None

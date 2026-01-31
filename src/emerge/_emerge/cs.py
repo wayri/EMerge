@@ -679,6 +679,7 @@ class Anchor(Saveable):
     
     def __str__(self) -> str:
         return f"Anchor(c0={self.c0}, x={self._x}, y={self._y}, z={self._z})"
+    
     @property
     def tx(self) -> Anchor:
         """ Same anchor rotated around its positive X-axis 180 degrees"""
@@ -739,8 +740,6 @@ class Anchor(Saveable):
         """
         T_self = self.as_homogeneous()
         T_other = other.as_homogeneous()
-        print(T_self)
-        print(T_other)
         return T_other @ np.linalg.inv(T_self)
 
     def rotate(self, c0, ax, angle):

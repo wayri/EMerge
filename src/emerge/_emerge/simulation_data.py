@@ -129,7 +129,26 @@ def generate_ndim(
     # Return each axis array followed by the grid
     return tuple(axes) + (grid,)
 
+def drop_constant_variables(
+    listvars: list[dict[str, float]]
+) -> list[dict[str, float]]:
+    if not listvars:
+        return []
 
+    # Collect all keys
+    keys = listvars[0].keys()
+
+    # Determine which keys actually vary
+    varying_keys = {
+        k for k in keys
+        if len({d[k] for d in listvars}) > 1
+    }
+
+    # Filter dictionaries to only keep varying keys
+    return [
+        {k: d[k] for k in varying_keys}
+        for d in listvars
+    ]
 class DataEntry(Saveable):
     
     def __init__(self, variables: dict[str, float]):
@@ -308,6 +327,22 @@ class BaseDataset(Generic[T,M], Saveable):
                 output.append(self.get_entry(i))
         return output
     
+    def slice_set(self, i1: int, i2: int | None = None) -> BaseDataset[T,M]:
+        """Reduces the DataSet object to a slice with the given range
+
+        Args:
+            i1 (int): Start index
+            i2 (int | None, optional): final index. Defaults to None.
+
+        Returns:
+            BaseDataset[T,M]: _description_
+        """
+        new_set = BaseDataset(self._datatype, self._matrixtype, self._scalar)
+        new_set._data_entries = self._data_entries[slice(i1,i2)]
+        new_set._variables = drop_constant_variables(self._variables[slice(i1,i2)])
+        
+        return new_set
+        
     def find(self, **variables: float) -> T:
         """Returns the physics dataset that is closest to the constraint given by the variables.
 
