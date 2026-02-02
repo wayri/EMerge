@@ -193,7 +193,6 @@ class DataContainer(Saveable):
     def __init__(self):
         self.entries: list[DataEntry] = []
         
-
     def print(self) -> None:
         """ Print an overview of all data in the DataContainer"""
         for entry in self.entries:

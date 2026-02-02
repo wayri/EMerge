@@ -34,6 +34,11 @@ class SimulationDataset(Saveable):
         self.mw: MWData = MWData()
         self.globals: dict[str, Any] = dict()
         self.sim: DataContainer = DataContainer()
+    
+    def reset(self):
+      self.mw: MWData = MWData()
+      self.globals: dict[str, Any] = dict()
+      self.sim: DataContainer = DataContainer()
       
     def clean(self) -> None:
       del self.mw

@@ -93,6 +93,7 @@ class SimState:
         self.params: dict[str, float] = dict()
         self._stashed: SimulationDataset | None = None
         self.manager: _GeometryManager = _GEOMANAGER
+        self.init()
         
     def init(self) -> None:
         """Initializes the Simstate to a clean starting point.

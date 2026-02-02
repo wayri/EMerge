@@ -35,7 +35,7 @@ f1 = 1.55e9             # start frequency
 f2 = 1.60e9             # stop frequency
 
 # --- Create simulation object -------------------------------------------
-model = em.Simulation('PatchAntenna')
+model = em.Simulation('PatchAntenna', loglevel='DEBUG')
 
 model.check_version("2.2.1") # Checks version compatibility.
 
@@ -119,6 +119,7 @@ abc = model.mw.bc.AbsorbingBoundary(boundary_selection)
 # --- Run frequency-domain solver ----------------------------------------
 model.view(plot_mesh=True, volume_mesh=False)
 model.view(bc=True)
+model.set_solver(em.EMSolver.SUPERLU)
 data = model.mw.run_sweep()
 
 # --- Post-process S-parameters ------------------------------------------

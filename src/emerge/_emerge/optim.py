@@ -158,7 +158,7 @@ class Optimizer:
         self._stop = True
         
     @property
-    def best(self) -> dict[str, float]:
+    def best(self) -> tuple[dict[str, float], float]:
         if not self._maximize:
             smallest_key = sorted(self.value_cache.keys(), key=lambda x: self.value_cache[x])[0]
         else:

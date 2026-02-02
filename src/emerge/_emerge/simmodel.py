@@ -138,19 +138,24 @@ class Simulation:
     #                       PRIVATE FUNCTIONS                  #
     ############################################################
 
-    def clean(self) -> None:
-        """ Cleans up the simulation object references by deleting all major components.
-        """
-        if self.state is not None:
-            self.state.sign_off()
-        self.state = None
-        if self.display:
-            self.display.clean()
-        self.mesher = None
-        self.modeler = None
-        self.mw = None
-        self.display = None
-
+    def _reset_mesh(self) -> None:
+        gmsh.model.mesh.clear()
+        self.mw.reset(_reset_bc = False)
+        self.state.reset_mesh()
+        
+    def _reset_geometry(self) -> None:
+        gmsh.clear()
+        gmsh.model.mesh.clear()
+        self.state.reset_geostate()
+        self.mw.reset(_reset_bc = False)
+        self.state.reset_mesh()
+        
+    def _reset_physics(self) -> None:
+        self.mw.reset()
+        
+    def _reset_data(self) -> None:
+        self.state.reset_data()
+    
     @property
     def data(self) -> SimulationDataset:
         return self.state.data
@@ -280,11 +285,70 @@ class Simulation:
         # set the state to active
         self.__active = False
         
-    
+    def _optim_callback(self):
+        self.mw.cache_matrices = False
+        if self.opt.clear_mesh and self.opt.N > 0:
+            logger.info('Cleaning up mesh.')
+            self.reset(mesh=True, geometry=True, physics=True)
+        self.state.set_parameters(self.opt.params)
+        if not self.opt.clear_mesh:
+            self.state.store_geometry_data()
+            
+    def _commit_quick_geometries(self) -> None:
+        """Used to temporarily submit geometries
+        """
+        logger.trace('Committing temporary geometry.')
+        self.state.store_geometry_data()
+        logger.trace(f'Parsed geometries = {self.state.geos}')
+        self.mesher.submit_objects(self.state.current_geo_state)
+        self.display._facetags = [dt[1] for dt in gmsh.model.get_entities(2)]
+        
     ############################################################
     #                       PUBLIC FUNCTIONS                  #
     ############################################################
+    def clean(self) -> None:
+        """ Cleans up the simulation object references by deleting all major components.
+        """
+        if self.state is not None:
+            self.state.sign_off()
+        self.state = None
+        if self.display:
+            self.display.clean()
+        self.mesher = None
+        self.modeler = None
+        self.mw = None
+        self.display = None
+        
+    def reset(self, 
+              mesh: bool = False, 
+              geometry: bool = False, 
+              physics: bool = False,
+              data: bool = False, 
+              all: bool = False):
+        """Resets the simulation model states
 
+        Args:
+            mesh (bool, optional): Reset the Mesh. Defaults to False.
+            geometry (bool, optional): Reset the CAD geometry. Defaults to False.
+            physics (bool, optional): Reset the physics settings. Defaults to False.
+            data (bool, optional): Reset the simulation data. Defaults to False.
+            all (bool, optional): Reset everything. Defaults to False.
+
+        """
+        if all:
+            self._reset_geometry()
+            self._reset_physics()
+            self._reset_data()
+            return
+        if mesh:
+            self._reset_mesh()
+        if physics:
+            self._reset_physics()
+        if geometry:
+            self._reset_geometry()
+        if data:
+            self._reset_data()
+            
     def cache_build(self) -> bool:
         """Checks if all the lines inside this if statement block are the same as those
         stored from a previous run. If so, then it returns false. Else it returns True.
@@ -471,17 +535,10 @@ class Simulation:
     def load(self) -> None:
         """Loads the model from the project directory."""
         mesh_path = self.modelpath / 'mesh.msh'
-        #brep_path = self.modelpath / 'model.brep'
         data_path = self.modelpath / 'simdata.emerge'
 
         if not data_path.exists():
             raise FileNotFoundError("Missing required mesh or data file.")
-
-        # Load GMSH Mesh (Ideally Id remove)
-        #gmsh.open(str(brep_path))
-        #gmsh.merge(str(mesh_path))
-        #gmsh.model.geo.synchronize()
-        #gmsh.model.occ.synchronize()
         
         logger.info(f"Loaded mesh from: {mesh_path}")
         if self.settings._save_method == 'msgpack':
@@ -585,17 +642,7 @@ class Simulation:
             Simulation: The same simulation object
         """
         self.mw.set_resolution(resolution)
-        
-    
-    def _commit_quick_geometries(self) -> None:
-        """Used to temporarily submit geometries
-        """
-        logger.trace('Committing temporary geometry.')
-        self.state.store_geometry_data()
-        logger.trace(f'Parsed geometries = {self.state.geos}')
-        self.mesher.submit_objects(self.state.current_geo_state)
-        self.display._facetags = [dt[1] for dt in gmsh.model.get_entities(2)]
-        
+          
     def commit_geometry(self, *geometries: GeoObject | list[GeoObject]) -> None:
         """Finalizes and locks the current geometry state of the simulation.
 
@@ -731,17 +778,6 @@ class Simulation:
         self.state.store_geometry_data()
         logger.trace(' (3) Mesh routine complete')
     
-    def _optim_callback(self):
-        self.mw.cache_matrices = False
-        if self.opt.clear_mesh and self.opt.N > 0:
-            logger.info('Cleaning up mesh.')
-            gmsh.clear()
-            self.state.reset_geostate()
-            self.mw.reset()
-        self.state.set_parameters(self.opt.params)
-        if not self.opt.clear_mesh:
-            self.state.store_geometry_data()
-    
     def parameter_sweep(self, clear_mesh: bool = True, **parameters: np.ndarray) -> Generator[tuple[float,...], None, None]:
         """Executes a parameteric sweep iteration.
 
@@ -776,10 +812,7 @@ class Simulation:
             
             if clear_mesh and i_iter > 0:
                 logger.info('Cleaning up mesh.')
-                gmsh.clear()
-                self.state.reset_geostate()
-                self.mw.reset()
-                
+                self.reset(geometry=True, physics=True, mesh=True)
             
             params = {key: dim[i_iter] for key,dim in zip(paramlist, dims_flat)}
             
@@ -799,8 +832,7 @@ class Simulation:
             self.state.store_geometry_data()
         
         self.mw.cache_matrices = True
-        
-        
+             
     def export(self, filename: str):
         """Exports the model or mesh depending on the extension. 
         
@@ -830,22 +862,11 @@ class Simulation:
     ############################################################
     #                     DEPRICATED FUNCTIONS                #
     ############################################################
-
-    def define_geometry(self, *args):
-        """DEPRICATED VERSION: Use .commit_geometry()
-        """
-        logger.warning('define_geometry() will be derpicated. Use commit_geometry() instead.')
-        self.commit_geometry(*args)
-    
     
 
     ############################################################
     #                   ADAPTIVE MESH REFINEMENT              #
     ############################################################
-    def _reset_mesh(self):
-        gmsh.model.mesh.clear()
-        self.mw.reset(_reset_bc = False)
-        self.state.reset_mesh()
     
     @staticmethod
     def guess_R(P: float, last_ratio: float = 1.0) -> float:
