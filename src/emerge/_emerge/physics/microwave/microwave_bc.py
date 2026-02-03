@@ -31,6 +31,15 @@ from emsutil import Material, AIR, Saveable
 from ...const import Z0, C0, EPS0, MU0
 from ...logsettings import DEBUG_COLLECTOR
 
+
+
+############################################################
+#                        EXCEPTIONS                       #
+############################################################
+
+class BoundaryConditionException(Exception):
+    pass
+
 ############################################################
 #                     UTILITY FUNCTIONS                    #
 ############################################################
@@ -39,8 +48,6 @@ def _inner_product(function: Callable, x: np.ndarray, y: np.ndarray, z: np.ndarr
             Exyz = function(x,y,z)
             return np.sum(Exyz[0,:]*ax.x + Exyz[1,:]*ax.y + Exyz[2,:]*ax.z)
         
-        
-
 ############################################################
 #                   MAIN BC MANAGER CLASS                  #
 ############################################################
@@ -116,8 +123,18 @@ class MWBoundaryConditionSet(BoundaryConditionSet):
                 continue
             if bc._include_force:
                 return True
-            
-        return False
+        raise BoundaryConditionException('The simulation has no boundary conditions that insert energy. Make sure to include at least one Port into your simulation.')
+    
+    def _check_ports(self) -> None:
+        numbers = []
+        for bc in self.oftype(PortBC):
+            numbers.append(bc.port_number)
+        numbers = sorted(numbers)
+        N = len(numbers)
+        
+        # check subsequent numbers
+        if not all([pa==pb for pa,pb in zip(range(1,N+1), numbers)]):
+            raise BoundaryConditionException(f'Port numbers are not subsequent integers. Values are {numbers} instead of {list(range(1,N+1))}')
 
 ############################################################
 #                    BOUNDARY CONDITIONS                   #

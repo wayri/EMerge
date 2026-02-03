@@ -518,11 +518,14 @@ class Simulation:
         # Pack and save data
         dataset = self.state.get_dataset()
         data_path = self.modelpath / 'simdata.emerge'
+        screenshot_path = self.modelpath / 'model.png'
         
         if self.settings._save_method == 'msgpack':
             save_object(str(data_path), dataset)
         else:
             joblib.dump(dataset, str(data_path))
+        
+        self.view(screenshot=screenshot_path, off_screen=True)
         
         if self._cache_run:
             cachepath = self.modelpath / 'pylines.txt'
@@ -576,7 +579,9 @@ class Simulation:
              labels: bool = False,
              bc: bool = False,
              bw: bool = False,
-             face_labels: bool = False) -> None:
+             face_labels: bool = False,
+             screenshot: str | None = None,
+             off_screen: bool = False) -> None:
         """View the current geometry in either the BaseDisplay object (PVDisplay only) or
         the GMSH viewer.
 
@@ -617,7 +622,8 @@ class Simulation:
                 if bc.selection.invalid:
                     continue
                 self.display.add_object(bc.selection, color=bc._color, opacity=0.4, label=True, label_text=bc._name, texture=bc._texture)
-        self.display.show()
+        
+        self.display.show(screenshot=screenshot, off_screen=off_screen)
 
         return None
         

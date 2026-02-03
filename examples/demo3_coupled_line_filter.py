@@ -45,7 +45,7 @@ model.check_version("2.2.1") # Checks version compatibility.
 mat = em.Material(er=3.55, color="#488343", opacity=0.4)
 
 # Create PCB layouter with given substrate thickness and units
-pcb = em.geo.PCB(th, unit=mil, material=mat)
+pcb = em.geo.PCBNew(th, unit=mil, material=mat)
 
 # --- Route coupled-line trace --------------------------------------------
 # start at (0,140) with width w0

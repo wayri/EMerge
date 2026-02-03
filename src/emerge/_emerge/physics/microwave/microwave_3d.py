@@ -327,8 +327,8 @@ class Microwave3D:
     
     def _check_physics(self) -> None:
         """ Executes a physics check before a simulation can be run."""
-        if not self.bc._is_excited():
-            raise SimulationError('The simulation has no boundary conditions that insert energy. Make sure to include at least one Port into your simulation.')
+        self.bc._is_excited()
+        self.bc._check_ports()
             
     def define_lumped_port_integration_points(self, port: LumpedPort) -> None:
         """Sets the integration points on Lumped Port objects for voltage integration
