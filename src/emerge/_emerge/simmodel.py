@@ -95,8 +95,9 @@ class Simulation:
         caller_file = Path(inspect.stack()[1].filename).resolve()
         base_path = caller_file.parent
 
-        self.modelname = modelname
-        self.modelpath = base_path / (modelname.lower()+path_suffix)
+        self.base_path: Path = base_path
+        self.modelname: str = modelname
+        self.modelpath: Path = base_path / (modelname.lower()+path_suffix)
         self.mesher: Mesher = Mesher()
         self.modeler: Modeler = Modeler()
         
@@ -518,7 +519,7 @@ class Simulation:
         # Pack and save data
         dataset = self.state.get_dataset()
         data_path = self.modelpath / 'simdata.emerge'
-        screenshot_path = self.modelpath / 'model.png'
+        screenshot_path = self.base_path / 'model.png'
         
         if self.settings._save_method == 'msgpack':
             save_object(str(data_path), dataset)
