@@ -60,10 +60,12 @@ Then on MacOS do:
 export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH"
 export CFLAGS="-I/opt/homebrew/include"
 export LDFLAGS="-L/opt/homebrew/lib"
+export CFLAGS="-Wno-error=int-conversion"
 ```
 Finally:
 ```
-pip install emerge[umfpack]
+pip install meson-python ninja
+pip install --no-build-isolation --no-binary=scikit-umfpack scikit-umfpack
 ```
 #### Multi threaded MUMPS
 To install the MUMPS solver on MacOS, download the installer directory from my website and follow the instructions:

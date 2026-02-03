@@ -62,7 +62,7 @@ class _CalculationInterface:
     def clear(self) -> None:
         self._ifobj = None
         
-    def getCenterOfMass(self, dim: int, tag: int) -> np.ndarray:
+    def getCenterOfMass(self, dim: int, tag: int) -> tuple[float, float, float]:
         return self._ifobj.getCenterOfMass(dim, tag)
     
     def getPoints(self, dimtags: list[tuple[int, int]]) -> list[np.ndarray]:

@@ -68,6 +68,7 @@ class MWBoundaryConditionSet(BoundaryConditionSet):
         self.Periodic: type[Periodic] = self._construct_bc(Periodic)
         self.FloquetPort: type[FloquetPort] = self._construct_bc(FloquetPort)
         self.UserDefinedPort: type[UserDefinedPort] = self._construct_bc(UserDefinedPort)
+        self.CoaxPort: type[CoaxPort] = self._construct_bc(CoaxPort)
 
         self._cell: PeriodicCell | None = None
 
@@ -172,6 +173,12 @@ class RobinBC(BoundaryCondition, Saveable):
     _include_mass: bool = False
     _include_force: bool = False
     _isabc: bool = False
+    o2coeffs: tuple[float, float] = {'A': (1.0, -0.5),
+                                    'B': (1.00023, -0.51555),
+                                    'C': (1.03084, -0.73631),
+                                    'D': (1.06103, -0.84883),
+                                    'E': (1.12500, -1.00000)
+                                    }
     dim: int = 2
 
     def __init__(self, selection: GeoSurface | Selection):
@@ -209,6 +216,7 @@ class PortBC(RobinBC, Saveable):
     _texture: str = "tex5.png"
     _name: str = "PortBC"
     dim: int = 2
+    
     def __init__(self, face: FaceSelection | GeoSurface):
         """(DO NOT USE) A generalization of the Port boundary condition.
         
@@ -229,7 +237,7 @@ class PortBC(RobinBC, Saveable):
         self.active: bool | None = False
         self.driven: bool = True
         self.power: float = 1.0
-
+        
     @property
     def voltage(self) -> complex | None:
         return None
@@ -383,12 +391,7 @@ class AbsorbingBoundary(RobinBC, Saveable):
         self.cs: CoordinateSystem = GCS
         self.material: Material = AIR
         self.abctype: Literal['A','B','C','D','E']  = abctype
-        self.o2coeffs: tuple[float, float] = {'A': (1.0, -0.5),
-                                              'B': (1.00023, -0.51555),
-                                              'C': (1.03084, -0.73631),
-                                              'D': (1.06103, -0.84883),
-                                              'E': (1.12500, -1.00000)
-                                              }
+        
         
     def get_basis(self) -> np.ndarray:
         return np.eye(3)
@@ -1011,6 +1014,143 @@ class RectangularWaveguide(PortBC, Saveable):
         Exg, Eyg, Ezg = self.cs.in_global_basis(Ex, Ey, Ez)
         return np.array([Exg, Eyg, Ezg])
 
+class CoaxPort(PortBC, Saveable):
+    
+    _include_stiff: bool = True
+    _include_mass: bool = False
+    _include_force: bool = True
+    _color: str = "#e1bd1c"
+    _name: str = "Coax"
+    _texture: str = "tex5.png"
+    
+    def __init__(self, 
+                 face: FaceSelection | GeoSurface,
+                 port_number: int, 
+                 rad_in_out: tuple[float, float],
+                 cs: CoordinateSystem,
+                 er: float = 1.0,
+                 power: float = 1):
+        """Creates a rectangular waveguide as a port boundary condition.
+        
+        Currently the Rectangular waveguide only supports TE0n modes. The mode field
+        is derived analytically. The local face coordinate system and dimensions can be provided
+        manually. If not provided the class will attempt to derive the local coordinate system and
+        face dimensions itself. It always orients the longest edge along the local X-direction.
+        The information on the derived coordiante system will be shown in the DEBUG level logs.
+
+        Args:
+            face (FaceSelection, GeoSurface): The port boundary face selection
+            port_number (int): The port number
+            mode: (tuple[int, int], optional): The TE mode number. Defaults to (1,0).
+            er: (float, optional): The Dielectric constant. Defaults to 1.0.
+            cs (CoordinateSystem, optional): The local coordinate system. Defaults to None.
+            dims (tuple[float, float], optional): The port face. Defaults to None.
+            power (float): The port power. Default to 1.
+        """
+        super().__init__(face)
+
+        self.port_number: int= port_number
+        self.active: bool = False
+        self.power: float = power
+        self.type: str = 'TEM'
+        self.er: float = er
+        self._polarization: float = 1.0
+        self.rad_in_out: tuple[float, float] = rad_in_out
+        self.cs: CoordinateSystem = cs
+        self.center: np.ndarray = self.cs.origin
+        self.normal: Axis = self.cs.zax
+        self.N_mesh_tris: int = 50
+        # points = self.selection.points
+    
+    @property
+    def _size_constraint(self) -> float:
+        area = self.selection.area
+        return np.sqrt(area/self.N_mesh_tris*4/np.sqrt(3))
+    
+    def get_basis(self) -> np.ndarray:
+        return self.cs._basis
+        
+    def get_inv_basis(self) -> np.ndarray:
+        return self.cs._basis_inv
+    
+    def portZ0(self, k0: float) -> complex:
+        return k0*299792458 * MU0/self.get_beta(k0)
+
+    def modetype(self, k0):
+        return self.type
+    
+    def get_amplitude(self, k0: float) -> float:
+        Zte = Z0
+        amplitude= np.sqrt(self.power*4*Zte/(self.dims[0]*self.dims[1]))
+        return amplitude
+
+    def get_beta(self, k0: float) -> float:
+        ''' Return the out of plane propagation constant. βz.'''
+        return np.sqrt(self.er)*k0
+    
+    def get_gamma(self, k0: float) -> complex:
+        """Computes the γ-constant for matrix assembly. This constant is required for the Robin boundary condition.
+
+        Args:
+            k0 (float): The free space propagation constant.
+
+        Returns:
+            complex: The γ-constant
+        """
+        return 1j*self.get_beta(k0)
+    
+    def get_Uinc(self, x_global: np.ndarray, y_global: np.ndarray, z_global: np.ndarray, k0: float, mode_nr: int = None) -> np.ndarray:
+        return -2*1j*self.get_beta(k0)*self.port_mode_3d_global(x_global, y_global, z_global, k0, mode_nr=mode_nr)
+    
+    def port_mode_3d(self, 
+                     x_local: np.ndarray,
+                     y_local: np.ndarray,
+                     k0: float,
+                     mode_nr: int = None,
+                     which: Literal['E','H'] = 'E') -> np.ndarray:
+        ''' Compute the port mode E-field in local coordinates (XY) + Z out of plane.'''
+        from ...const import Z0
+        # Constants
+        eta = Z0 / np.sqrt(self.er)
+        
+        Ri, Ro = self.rad_in_out
+        
+        pZ0 = (eta / (2 * np.pi)) * np.log(Ro / Ri)
+        
+        # 2. Relate Power to Voltage Amplitude: Pout = |V0|^2 / (2 * Z0)
+        V0 = np.sqrt(2 * pZ0 * self.power)
+        
+        # 3. Geometric calculations
+        rho = np.sqrt(x_local**2 + y_local**2)
+        phi = np.arctan2(y_local, x_local)
+        
+        # 4. Magnitude of Eradial
+        E_rho_mag = V0 / (rho * np.log(Ro / Ri))
+        
+        # 5. Account for Phase (Propagation along z)
+        E_rho = E_rho_mag 
+        
+        # 6. Convert Cylindrical (rho) to Cartesian (x, y)
+        Ex = (E_rho * np.cos(phi)).astype(np.complex128)
+        Ey = (E_rho * np.sin(phi)).astype(np.complex128)
+        Ez = 0.0*Ex # TEM mode has no longitudinal component
+        
+        Exyz =  self._qmode(k0) * np.array([Ex, Ey, Ez])
+        return Exyz
+
+    def port_mode_3d_global(self, 
+                            x_global: np.ndarray,
+                            y_global: np.ndarray,
+                            z_global: np.ndarray,
+                            k0: float,
+                            mode_nr: int = None,
+                            which: Literal['E','H'] = 'E') -> np.ndarray:
+        '''Compute the port mode field for global xyz coordinates.'''
+        xl, yl, _ = self.cs.in_local_cs(x_global, y_global, z_global)
+        Ex, Ey, Ez = self.port_mode_3d(xl, yl, k0)
+        Exg, Eyg, Ezg = self.cs.in_global_basis(Ex, Ey, Ez)
+        return np.array([Exg, Eyg, Ezg])
+    
 def _f_zero(k0,x,y,z):
     "Zero field function"
     return np.zeros_like(x, dtype=np.complex128)

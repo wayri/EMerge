@@ -202,7 +202,7 @@ class SimState:
     #                       GMSH LIKE METHODS                  #
     ############################################################
 
-    def getCenterOfMass(self, dim: int, tag: int) -> np.ndarray:
+    def getCenterOfMass(self, dim: int, tag: int) -> tuple[float, float, float]:
         if self.mesh.defined is False:
             return gmsh.model.occ.getCenterOfMass(dim, tag)
         return self.mesh.dimtag_to_center[(dim, tag)]

@@ -20,6 +20,7 @@ from numba import get_thread_id as get_thread_id
 import numpy as np
 from ..mth.optimized import compute_distances, matmul
 
+EPS = 0.00000001
 
 @njit(f8[:,:](f8[:,:]), cache=True, nogil=True)
 def matinv(M: np.ndarray) -> np.ndarray:
@@ -204,7 +205,7 @@ def ned2_tet_interp(coords: np.ndarray,
         
         coords_local = matmul(basis, coords_offset)#(basis @ (coords_offset))
 
-        inside = ((coords_local[0,:] + coords_local[1,:] + coords_local[2,:]) <= 1.00000001) & (coords_local[0,:] >= -1e-6) & (coords_local[1,:] >= -1e-6) & (coords_local[2,:] >= -1e-6)
+        inside = ((coords_local[0,:] + coords_local[1,:] + coords_local[2,:]) <= 1.0 + EPS) & (coords_local[0,:] >= -EPS) & (coords_local[1,:] >= -EPS) & (coords_local[2,:] >= -EPS)
 
         if inside.sum() == 0:
             continue
@@ -387,7 +388,7 @@ def ned2_tet_interp_curl(coords: np.ndarray,
         #coords_local = (basis @ (coords_offset))
         coords_local = matmul(basis, coords_offset)
 
-        inside = ((coords_local[0,:] + coords_local[1,:] + coords_local[2,:]) <= 1.00000001) & (coords_local[0,:] >= -1e-6) & (coords_local[1,:] >= -1e-6) & (coords_local[2,:] >= -1e-6)
+        inside = ((coords_local[0,:] + coords_local[1,:] + coords_local[2,:]) <= 1.0 + EPS) & (coords_local[0,:] >= -EPS) & (coords_local[1,:] >= -EPS) & (coords_local[2,:] >= -EPS)
 
         if inside.sum() == 0:
             continue
@@ -594,7 +595,7 @@ def ned2_tri_interp(coords: np.ndarray,
 
         Etri = solutions[field_ids]
 
-        inside = ((coords_local[0,:] + coords_local[1,:]) <= 1.0001) & (coords_local[0,:] >= -1e-6) & (coords_local[1,:] >= -1e-6)
+        inside = ((coords_local[0,:] + coords_local[1,:]) <= 1+EPS) & (coords_local[0,:] >= -EPS) & (coords_local[1,:] >= -EPS)
 
         if inside.sum() == 0:
             continue
@@ -700,7 +701,7 @@ def ned2_tri_interp_full(coords: np.ndarray,
 
         Etri = solutions[field_ids]
 
-        inside = ((coords_local[0,:] + coords_local[1,:]) <= 1.00001) & (coords_local[0,:] >= -1e-6) & (coords_local[1,:] >= -1e-6)
+        inside = ((coords_local[0,:] + coords_local[1,:]) <= 1.0 + EPS) & (coords_local[0,:] >= -EPS) & (coords_local[1,:] >= -EPS)
 
         if inside.sum() == 0:
             continue
@@ -777,7 +778,7 @@ def ned2_tri_interp_curl(coords: np.ndarray,
 
         Etri = solutions[field_ids]
 
-        inside = ((coords_local[0,:] + coords_local[1,:]) <= 1.0001) & (coords_local[0,:] >= -1e-6) & (coords_local[1,:] >= -1e-6)
+        inside = ((coords_local[0,:] + coords_local[1,:]) <= 1.0 + EPS) & (coords_local[0,:] >= -EPS) & (coords_local[1,:] >= -EPS)
 
         if inside.sum() == 0:
             continue
