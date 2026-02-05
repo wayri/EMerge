@@ -94,6 +94,7 @@ port1 = m.mw.bc.ModalPort(p1, 1, modetype='TEM')
 port2 = m.mw.bc.ModalPort(p2, 2, modetype='TEM')
 
 # Finally we execute the frequency domain sweep and compute the Scattering Parameters.
+
 sol = m.mw.run_sweep(parallel=True, n_workers=4, frequency_groups=8)
 
 # Our "sol" variable is of type MWData (Microwave Data). This contains a set of scalar data 

@@ -512,6 +512,7 @@ class HalfSphere(GeoVolume):
         self._add_face_pointer('outside', tag=self.boundary(exclude='disc').tags[0])
         
         self.anch.init(np.array([cx, cy, cz])+znp*radius/2, xnp*radius, ynp*radius, znp*radius/2)
+    
     @property
     def outside(self) -> FaceSelection:
         """The outside boundary of the half sphere.

@@ -497,12 +497,10 @@ class Mesher:
         
         dimtags = boundary.dimtags
         
-        
         if max_size is None:
             self._check_ready()
             max_size = self.max_size
         
-        #growth_distance = np.log10(max_size/size)/np.log10(growth_rate)
         growth_distance = (growth_rate*max_size - size)/(growth_rate-1)
         logger.debug(f'Setting boundary size for region {dimtags} to {size*1000:.3f}mm, GR={growth_rate:.3f}, dist={growth_distance*1000:.2f}mm, Max={max_size*1000:.3f}mm')
         
@@ -524,6 +522,95 @@ class Mesher:
     
         self.mesh_fields.append(thtag)
 
+    def set_trace_refinement(self, obj: GeoSurface | FaceSelection | Iterable, 
+                             qualtity_factor: float = 3.0,
+                             growth_rate: float = 3.0,
+                             min_size: float = 1e-5,
+                             max_size: float | None = None,
+                             min_overlap: float = 0.75):
+        """Performs an intelligent size constraint refinement for stripline edge gaps based on the distance between them.
+
+        This algorithm looks for parallel stripline edges and refines the mesh size around them iff the
+        they are at minimum overlapping by at least 75%(default) and not too close.
+        The mesh edge size constraint will be the distance between the line segments divided by the quality factor.
+        Args:
+            obj (GeoSurface | FaceSelection | Iterable): The trace or set of traces to refine
+            qualtity_factor (float, optional): How much to refine. Greater means finer mesh. Defaults to 3.0.
+            growth_rate (float, optional): How quickly the mesh size is allowed to grow. Defaults to 3.0.
+            min_size (float, optional): The minimum size of the mesh in meters. Defaults to 1e-5.
+            max_size (float | None, optional): The maximum size to constrain to. Defaults to None.
+            min_overlap (float | optional): The minimum overlap for two edges to be refined. Defaults to 0.75 = 75%
+
+        Raises:
+            MeshError: _description_
+        """
+        from collections import defaultdict
+        
+        if max_size is None:
+            self._check_ready()
+            max_size = self.max_size
+            
+        if isinstance(obj, Iterable):
+            from .geometry import select
+            obj = select(*obj)
+        
+        if obj.dim != 2:
+            raise MeshError('Can only do trace refinement for 2D structures. In case of thick metal traces, use the bottom layer with .face("-z")')
+        
+       
+        edge_dimtags = gmsh.model.get_boundary(obj.dimtags, True)
+        edges = [t for d, t in edge_dimtags if d==1]
+        edge_nodes: dict[int, tuple[int, int]] = {tag: gmsh.model.get_boundary([(1,tag),]) for tag in edges}
+        
+        edges = dict()
+        for edgetag, (dt1, dt2) in edge_nodes.items():
+            xyz1 = np.array([gmsh.model.get_value(0, dt1[1], [])]).squeeze()
+            xyz2 = np.array([gmsh.model.get_value(0, dt2[1], [])]).squeeze()
+            edgedir = (xyz2-xyz1)/np.linalg.norm(xyz2-xyz1)
+            edge_nodes[edgetag] = (xyz1, xyz2, edgedir)
+        
+        sizes = defaultdict(lambda: 1e9)
+        for t1, (p11, p12, e1) in edge_nodes.items():
+            for t2, (p21, p22, e2) in edge_nodes.items():
+                if t1==t2:
+                    continue
+                if np.abs(np.dot(e1,e2)) < 0.999:
+                    continue
+                # Lines are parallel
+                a = e1
+                b = p21-p11
+                du = np.cross(a,np.cross(a,b))
+                du = du/np.linalg.norm(du)
+                line_dist = np.abs(np.dot(du,b))
+                if line_dist < min_size:
+                    continue
+                c1 = (p11+p12)/2
+                c2 = (p21+p22)/2
+                dl = np.linalg.norm(c2-c1)
+                l1 = np.linalg.norm(p12-p11)
+                l2 = np.linalg.norm(p22-p21)
+                if dl < l1*(1-min_overlap):
+                    sizes[t1] = min(sizes[t1], max(min_size, line_dist/qualtity_factor))
+                if dl < l2*(1-min_overlap):
+                    sizes[t2] = min(sizes[t2], max(min_size, line_dist/qualtity_factor))
+        
+        for edge_tag, size in sizes.items():
+            if size == 1e9:
+                continue
+            growth_distance = (growth_rate*max_size - size)/(growth_rate-1)
+            
+            disttag = gmsh.model.mesh.field.add("Distance")
+            gmsh.model.mesh.field.setNumbers(disttag, "CurvesList", [edge_tag,])
+            gmsh.model.mesh.field.setNumber(disttag, "Sampling", 100)
+
+            thtag = gmsh.model.mesh.field.add("Threshold")
+            gmsh.model.mesh.field.setNumber(thtag, "InField", disttag)
+            gmsh.model.mesh.field.setNumber(thtag, "SizeMin", size)
+            gmsh.model.mesh.field.setNumber(thtag, "SizeMax", max_size)
+            gmsh.model.mesh.field.setNumber(thtag, "DistMin", size/2)
+            gmsh.model.mesh.field.setNumber(thtag, "DistMax", growth_distance)
+            self.mesh_fields.append(thtag)
+        
     def set_domain_size(self, obj: GeoObject | Selection, size: float):
         """Manually set the maximum element size inside a domain
 
