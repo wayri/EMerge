@@ -32,7 +32,7 @@ def matinv(M: np.ndarray) -> np.ndarray:
     Returns:
         np.ndarray: The matrix inverse inv(M)
     """
-    out = np.zeros((3,3), dtype=np.float64)
+    out = np.empty((3,3), dtype=np.float64)
    
     det = M[0,0]*M[1,1]*M[2,2] - M[0,0]*M[1,2]*M[2,1] - M[0,1]*M[1,0]*M[2,2] + M[0,1]*M[1,2]*M[2,0] + M[0,2]*M[1,0]*M[2,1] - M[0,2]*M[1,1]*M[2,0]
     out[0,0] = M[1,1]*M[2,2] - M[1,2]*M[2,1]
@@ -144,10 +144,42 @@ def local_mapping(vertex_ids, triangle_ids):
 @njit(i8[:](i8[:,:]), cache=True, nogil=True, parallel=True)
 def matmax(A: np.ndarray) -> np.ndarray:
     ncols = A.shape[0]
-    out = np.zeros((ncols,), dtype=np.int64)
+    out = np.empty((ncols,), dtype=np.int64)
     for j in prange(ncols):
         out[j] = np.max(A[j,:])
     return out
+
+@njit(types.Tuple((i8[:], i8[:], i8[:]))(i8[:]), cache=True, nogil=True)
+def get_group_indices(assigned_sorted):
+    # Count how many unique tets we have
+    if len(assigned_sorted) == 0:
+        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
+    
+    # Pre-calculate unique count to allocate arrays
+    n_unique = 1
+    for i in range(1, len(assigned_sorted)):
+        if assigned_sorted[i] != assigned_sorted[i-1]:
+            n_unique += 1
+            
+    unique_tets = np.empty(n_unique, dtype=assigned_sorted.dtype)
+    first_indices = np.empty(n_unique, dtype=np.int64)
+    last_indices = np.empty(n_unique, dtype=np.int64)
+    
+    # Fill the arrays
+    curr_idx = 0
+    unique_tets[0] = assigned_sorted[0]
+    first_indices[0] = 0
+    
+    for i in range(1, len(assigned_sorted)):
+        if assigned_sorted[i] != assigned_sorted[i-1]:
+            last_indices[curr_idx] = i
+            curr_idx += 1
+            unique_tets[curr_idx] = assigned_sorted[i]
+            first_indices[curr_idx] = i
+            
+    last_indices[curr_idx] = len(assigned_sorted)
+    
+    return unique_tets, first_indices, last_indices
 
 @njit(types.Tuple((c16[:], c16[:], c16[:]))(f8[:,:], c16[:], i8[:,:], i8[:,:], i8[:,:], f8[:,:], i8[:,:], i8[:]), cache=True, nogil=True, parallel=True)
 def ned2_tet_interp(coords: np.ndarray,
@@ -160,7 +192,6 @@ def ned2_tet_interp(coords: np.ndarray,
                     tetids: np.ndarray):
     
     ''' Nedelec 2 tetrahedral interpolation'''
-    Nthreads = config.NUMBA_NUM_THREADS
     # Solution has shape (nEdges, nsols)
     nNodes = coords.shape[1]
     nEdges = edges.shape[1]
@@ -174,67 +205,85 @@ def ned2_tet_interp(coords: np.ndarray,
     Ey = np.zeros((nNodes, ), dtype=np.complex128)
     Ez = np.zeros((nNodes, ), dtype=np.complex128)
     setnan = np.zeros((nNodes, ), dtype=np.int64)
-    assigned = np.full((nNodes,Nthreads), -1, dtype=np.int64)
+    assigned = np.full((nNodes,), -1, dtype=np.int64)
 
     for i_iter in prange(nTetIds):
         itet = tetids[i_iter]
 
-        iv1, iv2, iv3, iv4 = tets[:, itet]
+        # 1. Direct access - avoid slicing where possible
+        iv1, iv2, iv3, iv4 = tets[0, itet], tets[1, itet], tets[2, itet], tets[3, itet]
         
-        v1 = nodes[:,iv1]
-        v2 = nodes[:,iv2]
-        v3 = nodes[:,iv3]
-        v4 = nodes[:,iv4]
-
-        bv1 = v2 - v1
-        bv2 = v3 - v1
-        bv3 = v4 - v1
-
-        blocal = np.zeros((3,3))
-        blocal[:,0] = bv1
-        blocal[:,1] = bv2
-        blocal[:,2] = bv3
-        basis = matinv(blocal)
-
-        v1x, v1y, v1z = v1[0], v1[1], v1[2]
+        v1x, v1y, v1z = nodes[0, iv1], nodes[1, iv1], nodes[2, iv1]
         
-        coords_offset = coords*1.0
-        coords_offset[0,:] = coords_offset[0,:] - v1x
-        coords_offset[1,:] = coords_offset[1,:] - v1y
-        coords_offset[2,:] = coords_offset[2,:] - v1z
+        # 2. Manual 3x3 Jacobian (b-local)
+        m00 = nodes[0, iv2] - v1x
+        m10 = nodes[1, iv2] - v1y
+        m20 = nodes[2, iv2] - v1z
         
-        coords_local = matmul(basis, coords_offset)#(basis @ (coords_offset))
-
-        inside = ((coords_local[0,:] + coords_local[1,:] + coords_local[2,:]) <= 1.0 + EPS) & (coords_local[0,:] >= -EPS) & (coords_local[1,:] >= -EPS) & (coords_local[2,:] >= -EPS)
-
-        if inside.sum() == 0:
-            continue
-        TID = get_thread_id()
+        m01 = nodes[0, iv3] - v1x
+        m11 = nodes[1, iv3] - v1y
+        m21 = nodes[2, iv3] - v1z
         
-        assigned[inside,TID] = itet
+        m02 = nodes[0, iv4] - v1x
+        m12 = nodes[1, iv4] - v1y
+        m22 = nodes[2, iv4] - v1z
+
+        # 3. Determinant for manual inversion
+        det = m00*(m11*m22 - m12*m21) - m01*(m10*m22 - m12*m20) + m02*(m10*m21 - m11*m20)
+        inv_det = 1.0 / det
+
+        # 4. Manual Inverse Basis (Cramer's Rule)
+        b00 = (m11*m22 - m12*m21) * inv_det
+        b01 = (m02*m21 - m01*m22) * inv_det
+        b02 = (m01*m12 - m02*m11) * inv_det
+        
+        b10 = (m12*m20 - m10*m22) * inv_det
+        b11 = (m00*m22 - m02*m20) * inv_det
+        b12 = (m10*m02 - m00*m12) * inv_det
+        
+        b20 = (m10*m21 - m11*m20) * inv_det
+        b21 = (m20*m01 - m00*m21) * inv_det
+        b22 = (m00*m11 - m10*m01) * inv_det
+
+        # 5. Point-check loop (Avoids all temporary arrays!)
+        for j in range(nNodes):
+            # Translate point
+            dx = coords[0, j] - v1x
+            dy = coords[1, j] - v1y
+            dz = coords[2, j] - v1z
+            
+            # Matmul: basis @ dx
+            u = b00*dx + b01*dy + b02*dz
+            v = b10*dx + b11*dy + b12*dz
+            w = b20*dx + b21*dy + b22*dz
+            
+            # Barycentric coordinate check
+            if (u >= -EPS) and (v >= -EPS) and (w >= -EPS) and (u + v + w <= 1.0 + EPS):
+                assigned[j] = itet
     
-    # reduce assigned to (NTets,)by picking the first non -1 entry
-    assigned = matmax(assigned)
-    #selected = np.full((nNodes,Nthreads), -1, dtype=np.int64)
+    #assigned = matmax(assigned)
+    sort_idx = np.argsort(assigned)
+    xs_s = xs[sort_idx]
+    ys_s = ys[sort_idx]
+    zs_s = zs[sort_idx]
+    assigned_sorted = assigned[sort_idx]
+    offsets = np.searchsorted(assigned_sorted, tetids)
+    offsets_end = np.searchsorted(assigned_sorted, tetids, side='right')
     
     for i_iter in prange(nTetIds):
         itet = tetids[i_iter]
+        start = offsets[i_iter]
+        end = offsets_end[i_iter]
         
-        inside = assigned==itet
-        if inside.sum() == 0:
+        if start == end:
             continue
-        ######### INSIDE THE TETRAHEDRON #########
-        
-        x = xs[inside==1]
-        y = ys[inside==1]
-        z = zs[inside==1]
 
         xvs = nodes[0, tets[:,itet]]
         yvs = nodes[1, tets[:,itet]]
         zvs = nodes[2, tets[:,itet]]
 
         a_s, b_s, c_s, d_s, V = tet_coefficients(xvs, yvs, zvs)
-        
+        Ds = compute_distances(xvs, yvs, zvs)
         g_node_ids = tets[:, itet]
         g_edge_ids = edges[:, tet_to_field[:6, itet]]
         g_tri_ids = tris[:, tet_to_field[6:10, itet]-nEdges]
@@ -249,12 +298,9 @@ def ned2_tet_interp(coords: np.ndarray,
         Ef1s = Etet[6:10]
         Em2s = Etet[10:16]
         Ef2s = Etet[16:20]
-        
-        Exl = np.zeros(x.shape, dtype=np.complex128)
-        Eyl = np.zeros(x.shape, dtype=np.complex128)
-        Ezl = np.zeros(x.shape, dtype=np.complex128)
-        
-        V1 = (216*V**3)
+
+        V1 = 1/(216*V**3)
+
         for ie in range(6):
             Em1, Em2 = Em1s[ie], Em2s[ie]
             edgeids = l_edge_ids[:, ie]
@@ -265,17 +311,21 @@ def ned2_tet_interp(coords: np.ndarray,
             x1, x2 = xvs[edgeids]
             y1, y2 = yvs[edgeids]
             z1, z2 = zvs[edgeids]
-            F1 = (a1 + b1*x + c1*y + d1*z)
-            F2 = (a2 + b2*x + c2*y + d2*z)
-            L = np.sqrt((x1 - x2)**2 + (y1 - y2)**2 + (z1 - z2)**2)
-            ex =  L*(Em1*F1 + Em2*F2)*(b1*F2 - b2*F1)/V1
-            ey =  L*(Em1*F1 + Em2*F2)*(c1*F2 - c2*F1)/V1
-            ez =  L*(Em1*F1 + Em2*F2)*(d1*F2 - d2*F1)/V1
 
-            Exl += ex
-            Eyl += ey
-            Ezl += ez
-        
+            LV = Ds[edgeids[0], edgeids[1]]*V1
+
+            for i in range(start,end):
+                x = xs_s[i]
+                y = ys_s[i]
+                z = zs_s[i]
+                idx = sort_idx[i]
+                F1 = (a1 + b1*x + c1*y + d1*z)
+                F2 = (a2 + b2*x + c2*y + d2*z)
+                F3 = (Em1*F1 + Em2*F2)
+                Ex[idx] += LV*F3*(b1*F2 - b2*F1)
+                Ey[idx] += LV*F3*(c1*F2 - c2*F1)
+                Ez[idx] += LV*F3*(d1*F2 - d2*F1)
+            
         for ie in range(4):
             Em1, Em2 = Ef1s[ie], Ef2s[ie]
             triids = l_tri_ids[:, ie]
@@ -288,42 +338,28 @@ def ned2_tet_interp(coords: np.ndarray,
             y1, y2, y3 = yvs[l_tri_ids[:, ie]]
             z1, z2, z3 = zvs[l_tri_ids[:, ie]]
 
-            L1 = np.sqrt((x1-x3)**2 + (y1-y3)**2 + (z1-z3)**2)
-            L2 = np.sqrt((x1-x2)**2 + (y1-y2)**2 + (z1-z2)**2)
-            
-            F1 = (a1 + b1*x + c1*y + d1*z)
-            F2 = (a2 + b2*x + c2*y + d2*z)
-            F3 = (a3 + b3*x + c3*y + d3*z)
-            
-            Q1 = Em1*L1*F2
-            Q2 = Em2*L2*F3
-            ex =  (-Q1*(b1*F3 - b3*F1) + Q2*(b1*F2 - b2*F1))/V1
-            ey =  (-Q1*(c1*F3 - c3*F1) + Q2*(c1*F2 - c2*F1))/V1
-            ez =  (-Q1*(d1*F3 - d3*F1) + Q2*(d1*F2 - d2*F1))/V1
-            
-            Exl += ex
-            Eyl += ey
-            Ezl += ez
-        
-        #TID = get_thread_id()
-        Ex[inside] = Exl
-        Ey[inside] = Eyl
-        Ez[inside] = Ezl
+            L1 = Ds[l_tri_ids[2, ie], l_tri_ids[0,ie]]#np.sqrt((x1-x3)**2 + (y1-y3)**2 + (z1-z3)**2)
+            L2 = Ds[l_tri_ids[1, ie], l_tri_ids[0,ie]]#np.sqrt((x1-x2)**2 + (y1-y2)**2 + (z1-z2)**2)
+
+            for i in range(start,end):
+                x = xs_s[i]
+                y = ys_s[i]
+                z = zs_s[i]
+                idx = sort_idx[i]
+
+                F1 = (a1 + b1*x + c1*y + d1*z)
+                F2 = (a2 + b2*x + c2*y + d2*z)
+                F3 = (a3 + b3*x + c3*y + d3*z)
+                
+                Q1 = Em1*L1*F2
+                Q2 = Em2*L2*F3
+
+                Ex[idx] += (-Q1*(b1*F3 - b3*F1) + Q2*(b1*F2 - b2*F1))*V1
+                Ey[idx] += (-Q1*(c1*F3 - c3*F1) + Q2*(c1*F2 - c2*F1))*V1
+                Ez[idx] += (-Q1*(d1*F3 - d3*F1) + Q2*(d1*F2 - d2*F1))*V1
+                
+        inside = sort_idx[start:end]
         setnan[inside] = 1
-        #selected[inside,TID] = TID
-    
-    # sel = matmax(selected)
-    
-    # setnanf = matmax(setnan)
-    
-    # Exf = np.zeros((nNodes, ), dtype=np.complex128)
-    # Eyf = np.zeros((nNodes, ), dtype=np.complex128)
-    # Ezf = np.zeros((nNodes, ), dtype=np.complex128)
-    
-    # for i in prange(nNodes):
-    #     Exf[i] = Ex[i,sel[i]]
-    #     Eyf[i] = Ey[i,sel[i]]
-    #     Ezf[i] = Ez[i,sel[i]]
     
     Ex[setnan==0] = np.nan
     Ey[setnan==0] = np.nan
@@ -342,68 +378,98 @@ def ned2_tet_interp_curl(coords: np.ndarray,
                          tetids: np.ndarray):
     ''' Nedelec 2 tetrahedral interpolation of the analytic curl'''
     # Solution has shape (nEdges, nsols)
-    Nthreads = config.NUMBA_NUM_THREADS
     
     nNodes = coords.shape[1]
     nEdges = edges.shape[1]
+    nTetIds = tetids.shape[0]
 
     xs = coords[0,:]
     ys = coords[1,:]
     zs = coords[2,:]
     
-    Ex = np.zeros((nNodes, Nthreads), dtype=np.complex128)
-    Ey = np.zeros((nNodes, Nthreads), dtype=np.complex128)
-    Ez = np.zeros((nNodes, Nthreads), dtype=np.complex128)
-    setnan = np.zeros((nNodes, Nthreads), dtype=np.int64)
-    assigned = np.full((nNodes, Nthreads), -1, dtype=np.int64)
+    Ex = np.zeros((nNodes, ), dtype=np.complex128)
+    Ey = np.zeros((nNodes, ), dtype=np.complex128)
+    Ez = np.zeros((nNodes, ), dtype=np.complex128)
+    setnan = np.zeros((nNodes, ), dtype=np.int64)
+    assigned = np.full((nNodes,), -1, dtype=np.int64)
 
-    for i_iter in prange(tetids.shape[0]):
+    for i_iter in prange(nTetIds):
         itet = tetids[i_iter]
+
+        # 1. Direct access - avoid slicing where possible
+        iv1, iv2, iv3, iv4 = tets[0, itet], tets[1, itet], tets[2, itet], tets[3, itet]
         
-        iv1, iv2, iv3, iv4 = tets[:, itet]
-
-
-        v1 = nodes[:,iv1]
-        v2 = nodes[:,iv2]
-        v3 = nodes[:,iv3]
-        v4 = nodes[:,iv4]
-
-        bv1 = v2 - v1
-        bv2 = v3 - v1
-        bv3 = v4 - v1
-
-        blocal = np.zeros((3,3))
-        blocal[:,0] = bv1
-        blocal[:,1] = bv2
-        blocal[:,2] = bv3
-        basis = matinv(blocal)
-
-        v1x, v1y, v1z = v1[0], v1[1], v1[2]
+        v1x, v1y, v1z = nodes[0, iv1], nodes[1, iv1], nodes[2, iv1]
         
-        coords_offset = coords*1.0
-        coords_offset[0,:] = coords_offset[0,:] - v1x
-        coords_offset[1,:] = coords_offset[1,:] - v1y
-        coords_offset[2,:] = coords_offset[2,:] - v1z
+        # 2. Manual 3x3 Jacobian (b-local)
+        m00 = nodes[0, iv2] - v1x
+        m10 = nodes[1, iv2] - v1y
+        m20 = nodes[2, iv2] - v1z
         
-        #coords_local = (basis @ (coords_offset))
-        coords_local = matmul(basis, coords_offset)
+        m01 = nodes[0, iv3] - v1x
+        m11 = nodes[1, iv3] - v1y
+        m21 = nodes[2, iv3] - v1z
+        
+        m02 = nodes[0, iv4] - v1x
+        m12 = nodes[1, iv4] - v1y
+        m22 = nodes[2, iv4] - v1z
 
-        inside = ((coords_local[0,:] + coords_local[1,:] + coords_local[2,:]) <= 1.0 + EPS) & (coords_local[0,:] >= -EPS) & (coords_local[1,:] >= -EPS) & (coords_local[2,:] >= -EPS)
+        # 3. Determinant for manual inversion
+        det = m00*(m11*m22 - m12*m21) - m01*(m10*m22 - m12*m20) + m02*(m10*m21 - m11*m20)
+        inv_det = 1.0 / det
 
-        if inside.sum() == 0:
-            continue
-        TID = get_thread_id()
-        assigned[inside, TID] = itet
+        # 4. Manual Inverse Basis (Cramer's Rule)
+        b00 = (m11*m22 - m12*m21) * inv_det
+        b01 = (m02*m21 - m01*m22) * inv_det
+        b02 = (m01*m12 - m02*m11) * inv_det
+        
+        b10 = (m12*m20 - m10*m22) * inv_det
+        b11 = (m00*m22 - m02*m20) * inv_det
+        b12 = (m10*m02 - m00*m12) * inv_det
+        
+        b20 = (m10*m21 - m11*m20) * inv_det
+        b21 = (m20*m01 - m00*m21) * inv_det
+        b22 = (m00*m11 - m10*m01) * inv_det
 
-    assigned = matmax(assigned)
-    selected = np.full((nNodes,Nthreads), -1, dtype=np.int64)
+        # 5. Point-check loop (Avoids all temporary arrays!)
+        for j in range(nNodes):
+            # Translate point
+            dx = coords[0, j] - v1x
+            dy = coords[1, j] - v1y
+            dz = coords[2, j] - v1z
+            
+            # Matmul: basis @ dx
+            u = b00*dx + b01*dy + b02*dz
+            v = b10*dx + b11*dy + b12*dz
+            w = b20*dx + b21*dy + b22*dz
+            
+            # Barycentric coordinate check
+            if (u >= -EPS) and (v >= -EPS) and (w >= -EPS) and (u + v + w <= 1.0 + EPS):
+                assigned[j] = itet
+
+    #assigned = matmax(assigned)
+    sort_idx = np.argsort(assigned)
+    xs_s = xs[sort_idx]
+    ys_s = ys[sort_idx]
+    zs_s = zs[sort_idx]
+    assigned_sorted = assigned[sort_idx]
+    offsets = np.searchsorted(assigned_sorted, tetids)
+    offsets_end = np.searchsorted(assigned_sorted, tetids, side='right')
     
-    for i_iter in prange(tetids.shape[0]):
-        itet = tetids[i_iter] 
+    for i_iter in prange(nTetIds):
+        itet = tetids[i_iter]
+        start = offsets[i_iter]
+        end = offsets_end[i_iter]
         
-        inside = (assigned==itet)
-        if inside.sum() == 0:
+        if start == end:
             continue
+            
+        xvs = nodes[0, tets[:,itet]]
+        yvs = nodes[1, tets[:,itet]]
+        zvs = nodes[2, tets[:,itet]]
+
+        a_s, b_s, c_s, d_s, V = tet_coefficients(xvs, yvs, zvs)
+        Ds = compute_distances(xvs, yvs, zvs)
         
         g_node_ids = tets[:, itet]
         g_edge_ids = edges[:, tet_to_field[:6, itet]]
@@ -416,29 +482,16 @@ def ned2_tet_interp_curl(coords: np.ndarray,
         Etet = solutions[field_ids]
         
         const = c[itet]
+
         ######### INSIDE THE TETRAHEDRON #########
-        
-        x = xs[inside==1]
-        y = ys[inside==1]
-        z = zs[inside==1]
 
-        xvs = nodes[0, tets[:,itet]]
-        yvs = nodes[1, tets[:,itet]]
-        zvs = nodes[2, tets[:,itet]]
-
-        a_s, b_s, c_s, d_s, V = tet_coefficients(xvs, yvs, zvs)
-        
         Em1s = Etet[0:6]
         Ef1s = Etet[6:10]
         Em2s = Etet[10:16]
         Ef2s = Etet[16:20]
         
-        Exl = np.zeros(x.shape, dtype=np.complex128)
-        Eyl = np.zeros(x.shape, dtype=np.complex128)
-        Ezl = np.zeros(x.shape, dtype=np.complex128)
-        
-        V1 = (216*V**3)
-        V2 = (72*V**3)
+        V1 = const/(216*V**3)
+        V2 = const/(72*V**3)
         
         for ie in range(6):
             Em1, Em2 = Em1s[ie], Em2s[ie]
@@ -451,7 +504,7 @@ def ned2_tet_interp_curl(coords: np.ndarray,
             y1, y2 = yvs[edgeids]
             z1, z2 = zvs[edgeids]
 
-            L = np.sqrt((x1 - x2)**2 + (y1 - y2)**2 + (z1 - z2)**2)
+            L = Ds[edgeids[0], edgeids[1]]
             C1 = Em1*a1
             C2 = Em1*b1
             C3 = Em1*c1
@@ -477,13 +530,29 @@ def ned2_tet_interp_curl(coords: np.ndarray,
             D13 = c1*c2
             D14 = c1*c1
             D15 = b2*c2
+            KXc = -C1*D1 + C1*D2 - C5*D1 + C5*D2
+            KXx = (-C2*D1 + C2*D2 - C6*D1 + C6*D2)
+            KXy = (-C3*D1 + C3*D2 - C7*D5 + C8*D2)
+            KXz = (-C3*D3 + C4*D4 - C7*D6 + C8*D3)
             
-            ex =  L*(-C1*D1 + C1*D2 - C2*D1*x + C2*D2*x - C3*D1*y + C3*D2*y - C3*D3*z + C4*D4*z - C5*D1 + C5*D2 - C6*D1*x + C6*D2*x - C7*D5*y - C7*D6*z + C8*D2*y + C8*D3*z)/V2
-            ey =  L*(C1*D7 - C1*D8 + C2*D7*x - C2*D8*x + C2*D1*y + C2*D3*z - C9*D9*y - C9*D4*z + C5*D7 - C5*D8 + C10*D10*x + C10*D5*y + C10*D6*z - C6*D8*x - C6*D2*y - C6*D3*z)/V2
-            ez =  L*(-C1*D11 + C1*D12 - C2*D11*x + C2*D12*x - C2*D13*y - C2*D2*z + C9*D14*y + C9*D9*z - C5*D11 + C5*D12 - C10*D15*x - C10*c2*c2*y - C10*D5*z + C6*D12*x + C6*D13*y + C6*D1*z)/V2
-            Exl += ex
-            Eyl += ey
-            Ezl += ez
+            KYc = (C1*D7 - C1*D8 + C5*D7 - C5*D8)
+            KYx = (C2*D7 - C2*D8 + C10*D10 - C6*D8)
+            KYy = (C2*D1 - C9*D9 + C10*D5 - C6*D2)
+            KYz = (C2*D3 - C9*D4 + C10*D6 - C6*D3)
+
+            KZc = -C1*D11 + C1*D12 - C5*D11 + C5*D12
+            KZx = (-C2*D11 + C2*D12 - C10*D15 + C6*D12)
+            KZy = (-C2*D13 + C9*D14 - C10*c2*c2 + C6*D13)
+            KZz = (-C2*D2 + C9*D9 - C10*D5 + C6*D1)
+            VL = V2*L
+            for i in range(start,end):
+                x = xs_s[i]
+                y = ys_s[i]
+                z = zs_s[i]
+                idx = sort_idx[i]
+                Ex[idx] +=  VL*(KXc + KXx*x + KXy*y + KXz*z)
+                Ey[idx] +=  VL*(KYc + KYx*x + KYy*y + KYz*z)
+                Ez[idx] +=  VL*(KZc + KZx*x + KZy*y + KZz*z)
         
         for ie in range(4):
             Em1, Em2 = Ef1s[ie], Ef2s[ie]
@@ -497,59 +566,39 @@ def ned2_tet_interp_curl(coords: np.ndarray,
             y1, y2, y3 = yvs[l_tri_ids[:, ie]]
             z1, z2, z3 = zvs[l_tri_ids[:, ie]]
 
-            L1 = np.sqrt((x1-x3)**2 + (y1-y3)**2 + (z1-z3)**2)
-            L2 = np.sqrt((x1-x2)**2 + (y1-y2)**2 + (z1-z2)**2)
-            F1 = (a3 + b3*x + c3*y + d3*z)
-            F2 = (a1 + b1*x + c1*y + d1*z)
-            F3 = (a2 + b2*x + c2*y + d2*z)
-            N1 = (d1*F1 - d3*F2)
-            N2 = (c1*F1 - c3*F2)
+            N6 = ((c1*d2) - (c2*d1))
+            N10 = ((b1*d2) - (b2*d1))
+            N11 = ((b1*c2) - (b2*c1))
+            N12 = (b1*c3 - b3*c1)
             N3 = (c1*d3 - c3*d1)
-            N4 = (d1*F3 - d2*F2)
-            N5 = (c1*F3 - c2*F2)
-            D1 = c1*d2
-            D2 = c2*d1
-            N6 = (D1 - D2)
-            N7 = (b1*F1 - b3*F2)
             N8 = (b1*d3 - b3*d1)
-            N9 = (b1*F3 - b2*F2)
-            D7 = b1*d2
-            D8 = b2*d1
-            N10 = (D7 - D8)
-            D11 = b1*c2
-            D12 = b2*c1
-            ex =  (Em1*L1*(-c2*N1 + d2*N2 + 2*N3*F3) - Em2*L2*(-c3*N4 + d3*N5 + 2*N6*F1))/V1
-            ey =  (-Em1*L1*(-b2*N1 + d2*N7 + 2*N8*F3) + Em2*L2*(-b3*N4 + d3*N9 + 2*N10*F1))/V1
-            ez =  (Em1*L1*(-b2*N2 + c2*N7 + 2*(b1*c3 - b3*c1)*F3) - Em2*L2*(-b3*N5 + c3*N9 + 2*(D11 - D12)*F1))/V1
-            
-            Exl += ex
-            Eyl += ey
-            Ezl += ez
+            Em1L1 = Em1*Ds[l_tri_ids[0, ie], l_tri_ids[2, ie]]
+            Em2L2 = Em2*Ds[l_tri_ids[0, ie], l_tri_ids[1, ie]]
+            for i in range(start,end):
+                x = xs_s[i]
+                y = ys_s[i]
+                z = zs_s[i]
+                idx = sort_idx[i]
+                F1 = (a3 + b3*x + c3*y + d3*z)
+                F2 = (a1 + b1*x + c1*y + d1*z)
+                F3 = (a2 + b2*x + c2*y + d2*z)
+                N1 = (d1*F1 - d3*F2)
+                N2 = (c1*F1 - c3*F2)
+                N4 = (d1*F3 - d2*F2)
+                N5 = (c1*F3 - c2*F2)
+                N7 = (b1*F1 - b3*F2)
+                N9 = (b1*F3 - b2*F2)
+                Ex[idx] += (Em1L1*(-c2*N1 + d2*N2 + 2*N3*F3) - Em2L2*(-c3*N4 + d3*N5 + 2*N6*F1))*V1
+                Ey[idx] += -(Em1L1*(-b2*N1 + d2*N7 + 2*N8*F3) - Em2L2*(-b3*N4 + d3*N9 + 2*N10*F1))*V1
+                Ez[idx] += (Em1L1*(-b2*N2 + c2*N7 + 2*N12*F3) - Em2L2*(-b3*N5 + c3*N9 + 2*N11*F1))*V1
 
-        TID = get_thread_id()
-        Ex[inside,TID] = Exl*const
-        Ey[inside,TID] = Eyl*const
-        Ez[inside,TID] = Ezl*const
-        setnan[inside,TID] = 1
-        selected[inside,TID] = TID
+        inside = sort_idx[start:end]
+        setnan[inside] = 1
     
-    sel = matmax(selected)
-    
-    setnanf = matmax(setnan)
-    
-    Exf = np.zeros((nNodes, ), dtype=np.complex128)
-    Eyf = np.zeros((nNodes, ), dtype=np.complex128)
-    Ezf = np.zeros((nNodes, ), dtype=np.complex128)
-    
-    for i in prange(nNodes):
-        Exf[i] = Ex[i,sel[i]]
-        Eyf[i] = Ey[i,sel[i]]
-        Ezf[i] = Ez[i,sel[i]]
-        
-    Exf[setnanf==0] = np.nan
-    Eyf[setnanf==0] = np.nan
-    Ezf[setnanf==0] = np.nan
-    return Exf, Eyf, Ezf
+    Ex[setnan==0] = np.nan
+    Ey[setnan==0] = np.nan
+    Ez[setnan==0] = np.nan
+    return Ex, Ey, Ez
 
 @njit(types.Tuple((c16[:], c16[:], c16[:]))(f8[:,:], c16[:], i8[:,:], f8[:,:], i8[:,:]), cache=True, nogil=True)
 def ned2_tri_interp(coords: np.ndarray,

@@ -416,7 +416,7 @@ def matmul(M: np.ndarray, vecs: np.ndarray):
     out[2,:] = M[2,0]*vecs[0,:] + M[2,1]*vecs[1,:] + M[2,2]*vecs[2,:]
     return out
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _subsample_coordinates(xs: np.ndarray, ys: np.ndarray, tolerance: float, xmin: float) -> tuple[np.ndarray, np.ndarray]:
     """This function takes a set of x and y coordinates in a finely sampled set and returns a reduced
     set of numbers that traces the input curve within a provided tolerance.

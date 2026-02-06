@@ -29,7 +29,7 @@ from ...geometry import GeoSurface
 from ...mesh3d import Mesh3D
 from ...const import MU0
 from ...coord import Line
-from emsutil.emdata import EHField, EHFieldFF
+from emsutil.emdata import EHField, EHFieldFF, DataStructure
 from ...file import Saveable
 
 EMField = Literal[
@@ -553,6 +553,7 @@ class MWField(Saveable):
         ehfield = self.interpolate(x, y, z, False)
         ehfield.aux['tris'] = boundary.tris
         ehfield.aux['boundary'] = True
+        ehfield.structure = DataStructure.TRISURF
         return ehfield
     
     def current_boundary(self, selection: FaceSelection) -> EHField:
@@ -601,6 +602,7 @@ class MWField(Saveable):
         ehfield._Js = Js
         ehfield.aux['tris'] = boundary.tris
         ehfield.aux['boundary'] = True
+        ehfield.structure = DataStructure.TRISURF
         return ehfield
     
     def cutplane(self, 
@@ -636,7 +638,9 @@ class MWField(Saveable):
         if z is not None:
             X,Y = np.meshgrid(xs, ys)
             Z = z*np.ones_like(Y)
-        return self.interpolate(X,Y,Z, usenan=usenan)
+        field =  self.interpolate(X,Y,Z, usenan=usenan)
+        field.structure = DataStructure.GRID2D
+        return field
     
     def cutplane_normal(self,
              point=(0,0,0),
@@ -686,24 +690,34 @@ class MWField(Saveable):
         Y = point[1] + S_mesh*u[1] + T_mesh*v[1]
         Z = point[2] + S_mesh*u[2] + T_mesh*v[2]
 
-        return self.interpolate(X, Y, Z, usenan=usenan)
+        field = self.interpolate(X, Y, Z, usenan=usenan)
+        field.structure = DataStructure.GRID2D
+        return field
     
-    
-    def grid(self, ds: float, usenan: bool = True) -> EHField:
+    def grid(self, ds: float | None = None, N: int = 10_000, usenan: bool = True) -> EHField:
         """Interpolate a uniform grid sampled at ds
 
         Args:
-            ds (float): the sampling distance
+            ds (float, optional): the sampling grid size. Defaults to None (uses N)
+            N (int, optional): The approximate total number of sample points. Defaults to 10,000
 
         Returns:
-            This object
+            EHField: Storage container for data
         """
         xb, yb, zb = self.basis.bounds
-        xs = np.linspace(xb[0], xb[1], int((xb[1]-xb[0])/ds))
-        ys = np.linspace(yb[0], yb[1], int((yb[1]-yb[0])/ds))
-        zs = np.linspace(zb[0], zb[1], int((zb[1]-zb[0])/ds))
+        DX = xb[1]-xb[0]
+        DY = yb[1]-yb[0]
+        DZ = zb[1]-zb[0]
+        if ds is None:
+            ds = ((DX*DY*DZ)/N)**(1/3)
+            
+        xs = np.linspace(xb[0], xb[1], int(DX/ds)+1)
+        ys = np.linspace(yb[0], yb[1], int(DY/ds)+1)
+        zs = np.linspace(zb[0], zb[1], int(DZ/ds)+1)
         X, Y, Z = np.meshgrid(xs, ys, zs)
-        return self.interpolate(X,Y,Z, usenan=usenan)
+        field = self.interpolate(X,Y,Z, usenan=usenan)
+        field.structure = DataStructure.GRID3D
+        return field
     
     def vector(self, field: Literal['E','H'], metric: Literal['real','imag','complex'] = 'real') -> tuple[np.ndarray, np.ndarray,np.ndarray,np.ndarray,np.ndarray,np.ndarray]:
         """Returns the X,Y,Z,Fx,Fy,Fz data to be directly cast into plot functions.

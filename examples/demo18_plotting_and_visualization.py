@@ -170,9 +170,11 @@ dp.add_object(sphere, opacity=0.2)
 
 dp.show()
 
-""" We often want to add fields to visualize. We will add those now.
+""" 
+We often want to add fields to visualize. We will add those now.
 The display class has no direct features to add cut-plane E-fields or stuff like that. Instead it just has a
 surface plot function .add_surf(X,Y,Z,Scalar) that takes at least 4 positional arguments. 
+    
     X: 2D array of X-coordinates
     Y: 2D array of Y-coordinates
     Z: 2D array of Z-coordinates

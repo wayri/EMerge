@@ -2,7 +2,6 @@ import emerge as em
 import numpy as np
 from emerge.plot import plot_sp, smith, plot_ff_polar, plot_ff
 
-
 """ PATCH ANTENNA DEMO
 
 This design is modeled after this Comsol Demo: https://www.comsol.com/model/microstrip-patch-antenna-11742
@@ -35,7 +34,7 @@ f1 = 1.55e9             # start frequency
 f2 = 1.60e9             # stop frequency
 
 # --- Create simulation object -------------------------------------------
-model = em.Simulation('PatchAntenna', loglevel='DEBUG')
+model = em.Simulation('PatchAntenna')
 
 model.check_version("2.2.1") # Checks version compatibility.
 
@@ -61,7 +60,7 @@ cutout2 = em.geo.XYPlate(wstub, lstub,
                         position=( wline/2, -Lpatch/2, 0))
 # Feed line plate to add back between cutouts
 line = em.geo.XYPlate(wline, lstub,
-                         position=(-wline/2, -Lpatch/2, 0))
+                        position=(-wline/2, -Lpatch/2, 0))
 
 # Plate defining lumped port geometry (origin + width/height vectors)
 port = em.geo.Plate(
@@ -110,8 +109,8 @@ port_bc = model.mw.bc.LumpedPort(
 # Predefining selection
 # The outside of the air box for the absorbing boundary
 boundary_selection = air.boundary()
-# The patch and ground surface for PEC
 pec_selection = em.select(rpatch,ground)
+# The patch and ground surface for PEC
 
 # Assigning the boundary conditions
 abc = model.mw.bc.AbsorbingBoundary(boundary_selection)
@@ -119,7 +118,7 @@ abc = model.mw.bc.AbsorbingBoundary(boundary_selection)
 # --- Run frequency-domain solver ----------------------------------------
 model.view(plot_mesh=True, volume_mesh=False)
 model.view(bc=True)
-model.set_solver(em.EMSolver.SUPERLU)
+
 data = model.mw.run_sweep()
 
 # --- Post-process S-parameters ------------------------------------------
@@ -147,6 +146,6 @@ model.display.add_object(dielectric)
 field = data.field.find(freq=1.59e9)
 ff3d = field.farfield_3d(boundary_selection, origin=(0,0,0))
 surf = ff3d.surfplot('normE', rmax=40 * mm,
-                      offset=(0, 0, 20 * mm))
+                    offset=(0, 0, 20 * mm))
 model.display.add_surf(*surf.xyzf)
 model.display.show()

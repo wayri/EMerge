@@ -514,6 +514,10 @@ class StripPath:
     
     def _add_element(self, element: RouteElement) -> StripPath:
         """ Adds the provided RouteElement to the path. """
+        if len(self.path)==1 and self.path[0]==element:
+            self.path.pop(0)
+            self.path.append(element)
+            return self
         self.path.append(element)
         self._check_loops()
         return self
