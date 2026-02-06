@@ -337,7 +337,7 @@ def compute_distances(xs: np.ndarray, ys: np.ndarray, zs: np.ndarray) -> np.ndar
             Ds[j,i] = Ds[i,j]  
     return Ds
 
-ids = np.array([[0, 0, 1, 1, 2, 2],[1,2,0, 2, 0, 1]], dtype=np.int64)
+ids = np.array([[0, 0, 1, 1, 2, 2],[1, 2, 0, 2, 0, 1]], dtype=np.int64)
 
 @njit(c16[:,:](c16[:,:]), cache=True, nogil=True)
 def matinv(M: np.ndarray) -> np.ndarray:

@@ -155,7 +155,8 @@ class Simulation:
         self.mw.reset()
         
     def _reset_data(self) -> None:
-        self.state.reset_data()
+        self.state.data.reset()
+        self.state.init_data()
     
     @property
     def data(self) -> SimulationDataset:
@@ -826,6 +827,7 @@ class Simulation:
             self.state.set_parameters(params)
             
             logger.info(f'Iterating: {params}')
+            
             if len(dims_flat)==1:
                 yield dims_flat[0][i_iter]
             else:

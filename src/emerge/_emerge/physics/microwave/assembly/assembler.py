@@ -26,6 +26,7 @@ from loguru import logger
 from ..simjob import SimJob
 
 from ....const import MU0, EPS0, C0
+import math
 
 _PBC_DSMAX = 1e-15
 
@@ -92,7 +93,28 @@ def plane_basis_from_points(points: np.ndarray) -> np.ndarray:
     # Columns of eigvecs = principal axes
     return eigvecs
 
-
+def get_select_from_index(index):
+    # 0-5 are Edges (paired with mode+6), 6-9 are Faces (paired with mode+4)
+    # Total 10 entities
+    entities = [
+        (0, 6), (1, 7), (2, 8), (3, 9), (4, 10), (5, 11), # Edges
+        (12, 16), (13, 17), (14, 18), (15, 19)           # Faces
+    ]
+    
+    n = len(entities)
+    permuted_entities = []
+    temp_entities = list(entities)
+    
+    # Factoradic conversion to find the specific permutation
+    k = index
+    for i in range(n, 0, -1):
+        idx = k // math.factorial(i - 1)
+        k %= math.factorial(i - 1)
+        permuted_entities.append(temp_entities.pop(idx))
+    
+    # Flatten the list of tuples into the 20-element array
+    select = np.array([item for pair in permuted_entities for item in pair])
+    return select
 ############################################################
 #                    THE ASSEMBLER CLASS                   #
 ############################################################
@@ -400,6 +422,78 @@ class Assembler:
             Pmat = None
         
 
+
+        ############################################################
+        #                             RESORTER                     #
+        ############################################################
+        
+        # ne = mesh.n_edges
+        # nt = mesh.n_tris
+        # IM = 2*ne
+        
+        # ary1 = np.arange(ne*2)
+        # ary2 = np.arange(nt*2) + 2*ne
+        
+        # sorter = np.empty((2*ne+2*nt,), dtype=np.int64)
+        # sorter[:IM-1:2] = ary1[:ne]
+        # sorter[1:IM:2] = ary1[ne:]
+        # sorter[IM::2] = ary2[:nt]
+        # sorter[IM+1::2] = ary2[nt:]
+        
+        ### ids = np.array([[0, 0, 1, 1, 2, 2],[1, 2, 0, 2, 0, 1]], dtype=np.int64)
+        # EDGES
+        # 0 1 2 3 5 6
+        # 0 0 0 1 1 2
+        # 1 2 3 2 3 3
+        #
+        # TRIS
+        # 0 1 2 3
+        # _______
+        # 0 0 0 1
+        # 1 2 1 2
+        # 2 3 3 3
+        # | | | |
+        # v v v v
+        # 0 1 0 3 
+        # 3 5 4 5
+        # 1 2 2 4
+        
+        ne = mesh.n_edges
+        nt = mesh.n_tris
+        sorter = np.empty((2*ne + 2*nt,), dtype=np.int64)
+        Ictr = 0
+        past = set()
+        #select = np.array([0,6,1,7,2,8,3,9,4,10,5,11,12,16,13,17,14,18,15,19]) # best score = 2488
+        #select = np.array([0,6,12,16,1,7,13,17,2,8,14,18,3,9,4,10,5,11,15,19]) # best score = 2588
+        #select = np.array([12, 16, 13, 17, 14, 18, 15, 19, 0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11]) # best score = 2336
+        #select = np.array([0, 6, 1, 7, 3, 9, 12, 16, 2, 8, 5, 11, 13, 17,4, 10, 14, 18,15, 19]) # best score = 2384
+        #select = np.array([0, 6, 1, 7, 2, 8,3, 9, 4, 10,5, 11,12, 16, 13, 17, 14, 18, 15, 19]) # best score = 2629
+        #select = np.array([0, 6, 1, 7, 3, 9, 2, 8, 4, 10, 5, 11, 12, 16, 13, 17, 14, 18, 15, 19]) # best score = 2354
+        #select = np.array([0, 6, 1, 7, 3, 9, 2, 8, 4, 10, 5, 11, 12, 16, 13, 17, 14, 18, 15, 19]) # best score = 2350
+        #select = np.array([3, 9, 4, 10, 5, 11, 0, 6, 1, 7, 2, 8, 15, 19, 12, 16, 13, 17, 14, 18]) # best score = 2362
+        #select = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) # best score = 2456
+        #select = np.array([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19]) # best score = 2485
+        #select = np.array([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19]) # best score = 2408
+        #select = np.array([0, 6, 1, 7, 12, 16, 2, 8, 3, 9, 13, 17, 4, 10, 5, 11, 14, 18, 15, 19]) # best score = 2496
+        #select = np.array([0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11, 16, 12, 17, 13, 18, 14, 19, 15]) # best score = 2356
+        #select = np.array([0, 6, 1, 7, 2, 8, 12, 16, 13, 17, 3, 9, 4, 10, 5, 11, 14, 18, 15, 19]) # best score = 2430
+        #select = np.array([0, 6, 1, 7, 2, 8, 12, 16, 13, 17, 14, 18, 3, 9, 4, 10, 5, 11, 15, 19]) # best score = 2408
+        #select = np.array([0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11, 15, 19, 14, 18, 13, 17, 12, 16]) # 2284
+        #select = np.array([5, 11, 4, 10, 3, 9, 2, 8, 1, 7, 0, 6, 12, 16, 13, 17, 14, 18, 15, 19]) # 2436
+        #select = np.array([0, 6, 3, 9, 1, 7, 4, 10, 2, 8, 5, 11, 12, 16, 13, 17, 14, 18, 15, 19]) # 2400
+        #select = np.array([0, 1, 6, 7, 2, 3, 8, 9, 4, 5, 10, 11, 12, 13, 16, 17, 14, 15, 18, 19]) # 2342
+        #select = np.array([0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11, 12, 13, 14, 15, 16, 17, 18, 19]) # 2312
+        select = get_select_from_index(self.SELECT_INDEX)
+        for i in range(mesh.n_tets):
+            fieldids = field.tet_to_field[select,i]
+            for j in fieldids:
+                if j in past:
+                    continue
+                sorter[Ictr] = j
+                Ictr += 1
+                past.add(j)
+        
+        
         ############################################################
         #                             FINALIZE                     #
         ############################################################
@@ -416,12 +510,14 @@ class Assembler:
         logger.debug(f'Number of tets: {mesh.n_tets:,}')
         logger.debug(f'Number of DoF: {K.shape[0]:,}')
         logger.debug(f'Number of non-zero: {K.nnz:,}')
+        
         simjob = SimJob(K, b, K0*299792458/(2*np.pi), True)
         
         simjob.port_vectors = port_vectors
         simjob.solve_ids = solve_ids
         simjob._pec_tris = pec_tris
-        
+        simjob._sorter = sorter
+
         if has_periodic:
             simjob.P = Pmat
             simjob.Pd = Pmat.getH()

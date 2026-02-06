@@ -430,7 +430,6 @@ class ReverseCuthillMckee(Sorter):
         logger.debug('Reversing Reverse Cuthill-Mckee sorting.')
         return  x[self.inv_perm]
     
-
 ############################################################
 #                      PRECONDITIONERS                     #
 ############################################################
@@ -1307,7 +1306,7 @@ class SolveRoutine:
         end = time.time()
         simtime = end-start
         logger.info(f'{_pfx(self.pre,id)} Elapsed time taken: {simtime:.3f} seconds')
-        logger.debug(f'{_pfx(self.pre,id)} O(N^1.8) performance = {(NS**(1.8))/((end-start+1e-6)*1e6):.1f} MDoF/s')
+        logger.debug(f'{_pfx(self.pre,id)} O(N^1.8he) performance = {(NS**(2.0))/((end-start+1e-6)*1e6):.1f} MDoF/s')
         
         if self.use_sorter and solver.req_sorter:
             x = self.sorter.unsort(x_solved)

@@ -48,7 +48,10 @@ class SimJob:
         self.relative_path: str | None  = None
         self._store_location: dict = {}
         self._stored: bool = False
-
+        
+        self._sorter: np.ndarray | None = None
+        self._isorter: np.ndarray | None = None
+        
         self._active_port: int = -1
         self.reports: list[SolveReport] = []
         self.id: int = -1
@@ -68,6 +71,10 @@ class SimJob:
             return None  # Unload from memory
         return matrix
     
+    def set_sorter(self, order: np.ndarray):
+        self._sorter = order
+        self._isorter = np.argsort(order)
+        
     def store_if_needed(self):
         self.A = self.maybe_store(self.A, 'A')
         if self.has_periodic:
@@ -100,7 +107,7 @@ class SimJob:
                 A = Pd @ A @ P
                 aux['Periodic reduction'] = str(P.shape)
 
-            
+            A, b_active = self.sort(A, b_active)
             yield A, b_active, self.solve_ids, reuse_factorization, aux
 
             reuse_factorization = True
@@ -126,7 +133,7 @@ class SimJob:
     
     def submit_solution(self, solution: np.ndarray, report: SolveReport):
         # Solve the Ax=b problem
-
+        solution = self.unsort(solution)
         if self.has_periodic:
             solution = self.P @ solution
         # From now reuse the factorization
@@ -150,3 +157,15 @@ class SimJob:
         # If the directory is now empty, remove it
         if not os.listdir(self.relative_path):
             os.rmdir(self.relative_path)
+            
+    def sort(self, A, b) -> tuple[csr_matrix, np.ndarray]:
+        if self._sorter is None:
+            return A, b
+        Asorted = A[self._sorter, :][:, self._sorter]
+        bsorted = b[self._sorter]
+        return Asorted, bsorted
+    
+    def unsort(self, x: np.ndarray) -> np.ndarray:
+        if self._isorter is None:
+            return x
+        return  x[self._isorter]

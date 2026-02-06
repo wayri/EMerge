@@ -446,6 +446,7 @@ def _matrix_builder(nodes, tets, tris, edges, all_edge_lengths, tet_to_field, te
         
         local_tri_map = local_tet_to_triid(tet_to_field, tets, tris, itet, nedges)
         local_edge_map = local_tet_to_edgeid(tets, edges, tet_to_field, itet)
+        #print(local_edge_map)
         edge_lengths = all_edge_lengths[tet_to_edge[:,itet]]
 
         # Construct the local edge map
