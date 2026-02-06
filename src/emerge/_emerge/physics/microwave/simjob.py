@@ -107,8 +107,8 @@ class SimJob:
                 A = Pd @ A @ P
                 aux['Periodic reduction'] = str(P.shape)
 
-            A, b_active = self.sort(A, b_active)
-            yield A, b_active, self.solve_ids, reuse_factorization, aux
+            A, b_active, solve_ids = self.sort(A, b_active, self.solve_ids)
+            yield A, b_active, solve_ids, reuse_factorization, aux
 
             reuse_factorization = True
         
@@ -158,12 +158,16 @@ class SimJob:
         if not os.listdir(self.relative_path):
             os.rmdir(self.relative_path)
             
-    def sort(self, A, b) -> tuple[csr_matrix, np.ndarray]:
+    def sort(self, A, b, solve_ids) -> tuple[csr_matrix, np.ndarray]:
         if self._sorter is None:
             return A, b
         Asorted = A[self._sorter, :][:, self._sorter]
         bsorted = b[self._sorter]
-        return Asorted, bsorted
+        counts = np.zeros((A.shape[0],), dtype=np.int64)
+        counts[solve_ids] = 1
+        counts = counts[self._sorter]
+        
+        return Asorted, bsorted, np.argwhere(counts==1).flatten()
     
     def unsort(self, x: np.ndarray) -> np.ndarray:
         if self._isorter is None:

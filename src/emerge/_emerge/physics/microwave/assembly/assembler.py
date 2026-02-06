@@ -115,6 +115,43 @@ def get_select_from_index(index):
     # Flatten the list of tuples into the 20-element array
     select = np.array([item for pair in permuted_entities for item in pair])
     return select
+
+def get_morton_order(centroids):
+    # centroids shape: (3, N_tets)
+    coords = centroids.T # Shape (N_tets, 3)
+    
+    # Normalize coordinates to [0, 1023] for 10-bit resolution (30 bits total)
+    # This fits within standard 32-bit integers
+    c_min = coords.min(axis=0)
+    c_max = coords.max(axis=0)
+    
+    # Avoid division by zero for 2D/1D cases
+    denom = (c_max - c_min)
+    denom[denom == 0] = 1.0
+    
+    scaled = ((coords - c_min) / denom * 1023).astype(np.uint32)
+    
+    def interleave_bits(n):
+        n = (n | (n << 16)) & 0x030000FF
+        n = (n | (n << 8))  & 0x0300F00F
+        n = (n | (n << 4))  & 0x030C30C3
+        n = (n | (n << 2))  & 0x09249249
+        return n
+
+    # Calculate Morton codes
+    morton_codes = (interleave_bits(scaled[:, 0]) | 
+                    (interleave_bits(scaled[:, 1]) << 1) | 
+                    (interleave_bits(scaled[:, 2]) << 2))
+    
+    # Return the indices that sort the codes
+    return np.argsort(morton_codes)
+
+def get_lexicographical_order(centroids):
+    # centroids shape: (3, N_tets)
+    # Using np.lexsort: sorts by last key first (Z, then Y, then X)
+    # This results in a primary sort on X, secondary on Y, tertiary on Z
+    x, y, z = centroids[0, :], centroids[1, :], centroids[2, :]
+    return np.lexsort((z, y, x))
 ############################################################
 #                    THE ASSEMBLER CLASS                   #
 ############################################################
@@ -128,7 +165,8 @@ class Assembler:
         
         self.cached_matrices = None
         self.settings: Settings = settings
-    
+        self.SELECT_INDEX: int = 598
+        
     def assemble_bma_matrices(self,
                               field: Nedelec2,
                         er: np.ndarray, 
@@ -427,19 +465,6 @@ class Assembler:
         #                             RESORTER                     #
         ############################################################
         
-        # ne = mesh.n_edges
-        # nt = mesh.n_tris
-        # IM = 2*ne
-        
-        # ary1 = np.arange(ne*2)
-        # ary2 = np.arange(nt*2) + 2*ne
-        
-        # sorter = np.empty((2*ne+2*nt,), dtype=np.int64)
-        # sorter[:IM-1:2] = ary1[:ne]
-        # sorter[1:IM:2] = ary1[ne:]
-        # sorter[IM::2] = ary2[:nt]
-        # sorter[IM+1::2] = ary2[nt:]
-        
         ### ids = np.array([[0, 0, 1, 1, 2, 2],[1, 2, 0, 2, 0, 1]], dtype=np.int64)
         # EDGES
         # 0 1 2 3 5 6
@@ -460,30 +485,13 @@ class Assembler:
         
         ne = mesh.n_edges
         nt = mesh.n_tris
-        sorter = np.empty((2*ne + 2*nt,), dtype=np.int64)
+        sorter = np.zeros((2*ne + 2*nt,), dtype=np.int64)-1
         Ictr = 0
         past = set()
         #select = np.array([0,6,1,7,2,8,3,9,4,10,5,11,12,16,13,17,14,18,15,19]) # best score = 2488
-        #select = np.array([0,6,12,16,1,7,13,17,2,8,14,18,3,9,4,10,5,11,15,19]) # best score = 2588
-        #select = np.array([12, 16, 13, 17, 14, 18, 15, 19, 0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11]) # best score = 2336
-        #select = np.array([0, 6, 1, 7, 3, 9, 12, 16, 2, 8, 5, 11, 13, 17,4, 10, 14, 18,15, 19]) # best score = 2384
+        select = np.array([0,6,12,16,1,7,13,17,2,8,14,18,3,9,4,10,5,11,15,19]) # best score = 2588
         #select = np.array([0, 6, 1, 7, 2, 8,3, 9, 4, 10,5, 11,12, 16, 13, 17, 14, 18, 15, 19]) # best score = 2629
-        #select = np.array([0, 6, 1, 7, 3, 9, 2, 8, 4, 10, 5, 11, 12, 16, 13, 17, 14, 18, 15, 19]) # best score = 2354
-        #select = np.array([0, 6, 1, 7, 3, 9, 2, 8, 4, 10, 5, 11, 12, 16, 13, 17, 14, 18, 15, 19]) # best score = 2350
-        #select = np.array([3, 9, 4, 10, 5, 11, 0, 6, 1, 7, 2, 8, 15, 19, 12, 16, 13, 17, 14, 18]) # best score = 2362
-        #select = np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) # best score = 2456
-        #select = np.array([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19]) # best score = 2485
-        #select = np.array([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19]) # best score = 2408
-        #select = np.array([0, 6, 1, 7, 12, 16, 2, 8, 3, 9, 13, 17, 4, 10, 5, 11, 14, 18, 15, 19]) # best score = 2496
-        #select = np.array([0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11, 16, 12, 17, 13, 18, 14, 19, 15]) # best score = 2356
-        #select = np.array([0, 6, 1, 7, 2, 8, 12, 16, 13, 17, 3, 9, 4, 10, 5, 11, 14, 18, 15, 19]) # best score = 2430
-        #select = np.array([0, 6, 1, 7, 2, 8, 12, 16, 13, 17, 14, 18, 3, 9, 4, 10, 5, 11, 15, 19]) # best score = 2408
-        #select = np.array([0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11, 15, 19, 14, 18, 13, 17, 12, 16]) # 2284
-        #select = np.array([5, 11, 4, 10, 3, 9, 2, 8, 1, 7, 0, 6, 12, 16, 13, 17, 14, 18, 15, 19]) # 2436
-        #select = np.array([0, 6, 3, 9, 1, 7, 4, 10, 2, 8, 5, 11, 12, 16, 13, 17, 14, 18, 15, 19]) # 2400
-        #select = np.array([0, 1, 6, 7, 2, 3, 8, 9, 4, 5, 10, 11, 12, 13, 16, 17, 14, 15, 18, 19]) # 2342
-        #select = np.array([0, 6, 1, 7, 2, 8, 3, 9, 4, 10, 5, 11, 12, 13, 14, 15, 16, 17, 18, 19]) # 2312
-        select = get_select_from_index(self.SELECT_INDEX)
+        #select = get_select_from_index(self.SELECT_INDEX)
         for i in range(mesh.n_tets):
             fieldids = field.tet_to_field[select,i]
             for j in fieldids:
@@ -492,7 +500,6 @@ class Assembler:
                 sorter[Ictr] = j
                 Ictr += 1
                 past.add(j)
-        
         
         ############################################################
         #                             FINALIZE                     #
@@ -516,7 +523,7 @@ class Assembler:
         simjob.port_vectors = port_vectors
         simjob.solve_ids = solve_ids
         simjob._pec_tris = pec_tris
-        simjob._sorter = sorter
+        simjob.set_sorter(sorter)
 
         if has_periodic:
             simjob.P = Pmat

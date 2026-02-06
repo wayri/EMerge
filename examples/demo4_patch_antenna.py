@@ -34,7 +34,7 @@ f1 = 1.55e9             # start frequency
 f2 = 1.60e9             # stop frequency
 
 # --- Create simulation object -------------------------------------------
-model = em.Simulation('PatchAntenna')
+model = em.Simulation('PatchAntenna', loglevel='DEBUG')
 
 model.check_version("2.2.1") # Checks version compatibility.
 
