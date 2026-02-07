@@ -160,7 +160,7 @@ class SimJob:
             
     def sort(self, A, b, solve_ids) -> tuple[csr_matrix, np.ndarray]:
         if self._sorter is None:
-            return A, b
+            return A, b, solve_ids
         Asorted = A[self._sorter, :][:, self._sorter]
         bsorted = b[self._sorter]
         counts = np.zeros((A.shape[0],), dtype=np.int64)

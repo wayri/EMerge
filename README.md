@@ -67,6 +67,9 @@ Finally:
 pip install meson-python ninja
 pip install --no-build-isolation --no-binary=scikit-umfpack scikit-umfpack
 ```
+
+**note**: If you have any corrections to these instructions (for any os) please let me know!
+
 #### Multi threaded MUMPS
 To install the MUMPS solver on MacOS, download the installer directory from my website and follow the instructions:
 
@@ -74,8 +77,13 @@ https://www.emerge-software.com/resources
 
 ### Windows (x86)
 Windows has easy access to the lightning fast PARDISO solver out of the box, no installation needed.
-If you want to install the UMFPACK solver for distributed sweeps, please follow the instructions for the UMFPACK
-installation manual on my website
+If you want to install the UMFPACK solver for distributed sweeps this distribution should work through conda forge:
+
+```bash
+conda install conda-forge::scikit-umfpack
+```
+
+Otherwise try the solution in the user manual.
 
 https://www.emerge-software.com/resources
 

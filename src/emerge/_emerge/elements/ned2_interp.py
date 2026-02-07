@@ -192,6 +192,7 @@ def ned2_tet_interp(coords: np.ndarray,
                     tetids: np.ndarray):
     
     ''' Nedelec 2 tetrahedral interpolation'''
+    NThreads = 6
     # Solution has shape (nEdges, nsols)
     nNodes = coords.shape[1]
     nEdges = edges.shape[1]
@@ -205,7 +206,7 @@ def ned2_tet_interp(coords: np.ndarray,
     Ey = np.zeros((nNodes, ), dtype=np.complex128)
     Ez = np.zeros((nNodes, ), dtype=np.complex128)
     setnan = np.zeros((nNodes, ), dtype=np.int64)
-    assigned = np.full((nNodes,), -1, dtype=np.int64)
+    assigned = np.full((nNodes,NThreads), -1, dtype=np.int64)
 
     for i_iter in prange(nTetIds):
         itet = tetids[i_iter]
@@ -244,7 +245,7 @@ def ned2_tet_interp(coords: np.ndarray,
         b20 = (m10*m21 - m11*m20) * inv_det
         b21 = (m20*m01 - m00*m21) * inv_det
         b22 = (m00*m11 - m10*m01) * inv_det
-
+        tid = get_thread_id()
         # 5. Point-check loop (Avoids all temporary arrays!)
         for j in range(nNodes):
             # Translate point
@@ -259,9 +260,9 @@ def ned2_tet_interp(coords: np.ndarray,
             
             # Barycentric coordinate check
             if (u >= -EPS) and (v >= -EPS) and (w >= -EPS) and (u + v + w <= 1.0 + EPS):
-                assigned[j] = itet
+                assigned[j,tid] = itet
     
-    #assigned = matmax(assigned)
+    assigned = matmax(assigned)
     sort_idx = np.argsort(assigned)
     xs_s = xs[sort_idx]
     ys_s = ys[sort_idx]
@@ -378,7 +379,7 @@ def ned2_tet_interp_curl(coords: np.ndarray,
                          tetids: np.ndarray):
     ''' Nedelec 2 tetrahedral interpolation of the analytic curl'''
     # Solution has shape (nEdges, nsols)
-    
+    NThreads = 6
     nNodes = coords.shape[1]
     nEdges = edges.shape[1]
     nTetIds = tetids.shape[0]
@@ -391,7 +392,7 @@ def ned2_tet_interp_curl(coords: np.ndarray,
     Ey = np.zeros((nNodes, ), dtype=np.complex128)
     Ez = np.zeros((nNodes, ), dtype=np.complex128)
     setnan = np.zeros((nNodes, ), dtype=np.int64)
-    assigned = np.full((nNodes,), -1, dtype=np.int64)
+    assigned = np.full((nNodes,NThreads), -1, dtype=np.int64)
 
     for i_iter in prange(nTetIds):
         itet = tetids[i_iter]
@@ -431,6 +432,7 @@ def ned2_tet_interp_curl(coords: np.ndarray,
         b21 = (m20*m01 - m00*m21) * inv_det
         b22 = (m00*m11 - m10*m01) * inv_det
 
+        tid = get_thread_id()
         # 5. Point-check loop (Avoids all temporary arrays!)
         for j in range(nNodes):
             # Translate point
@@ -445,9 +447,9 @@ def ned2_tet_interp_curl(coords: np.ndarray,
             
             # Barycentric coordinate check
             if (u >= -EPS) and (v >= -EPS) and (w >= -EPS) and (u + v + w <= 1.0 + EPS):
-                assigned[j] = itet
+                assigned[j, tid] = itet
 
-    #assigned = matmax(assigned)
+    assigned = matmax(assigned)
     sort_idx = np.argsort(assigned)
     xs_s = xs[sort_idx]
     ys_s = ys[sort_idx]

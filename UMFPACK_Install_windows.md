@@ -3,6 +3,7 @@
 This guide walks you through setting up **UMFPACK** (from SuiteSparse) to work with Python to use it for `emerge`.
 
 **IMPORTANT**: Due to the assumption of windows use, all commands are using pip install commands using `python -m pip install ....`. Try what works for your system.
+
 ```bash
 pip install ...
 python -m pip install ...
@@ -10,6 +11,20 @@ py -m pip install ...
 ```
 
 ---
+
+# The easy way
+Install conda(miniconda) 
+
+[Download Miniconda →](https://docs.conda.io/en/latest/miniconda.html)
+
+And then do:
+```bash
+conda install conda-forge::scikit-umfpack
+```
+
+This should work, if not you can try the hard way!
+
+# The hard way
 
 ## Step 0: (Optional) Uninstall conflicting packages first
 

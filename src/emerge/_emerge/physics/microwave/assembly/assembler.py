@@ -165,7 +165,7 @@ class Assembler:
         
         self.cached_matrices = None
         self.settings: Settings = settings
-        self.SELECT_INDEX: int = 598
+        self.SELECT_INDEX: int = None
         
     def assemble_bma_matrices(self,
                               field: Nedelec2,
@@ -483,23 +483,22 @@ class Assembler:
         # 3 5 4 5
         # 1 2 2 4
         
-        ne = mesh.n_edges
-        nt = mesh.n_tris
-        sorter = np.zeros((2*ne + 2*nt,), dtype=np.int64)-1
-        Ictr = 0
-        past = set()
-        #select = np.array([0,6,1,7,2,8,3,9,4,10,5,11,12,16,13,17,14,18,15,19]) # best score = 2488
-        select = np.array([0,6,12,16,1,7,13,17,2,8,14,18,3,9,4,10,5,11,15,19]) # best score = 2588
-        #select = np.array([0, 6, 1, 7, 2, 8,3, 9, 4, 10,5, 11,12, 16, 13, 17, 14, 18, 15, 19]) # best score = 2629
-        #select = get_select_from_index(self.SELECT_INDEX)
-        for i in range(mesh.n_tets):
-            fieldids = field.tet_to_field[select,i]
-            for j in fieldids:
-                if j in past:
-                    continue
-                sorter[Ictr] = j
-                Ictr += 1
-                past.add(j)
+        # ne = mesh.n_edges
+        # nt = mesh.n_tris
+        # sorter = np.zeros((2*ne + 2*nt,), dtype=np.int64)-1
+        # Ictr = 0
+        # past = set()
+        # select = np.array([0,6,12,16,1,7,13,17,2,8,14,18,3,9,4,10,5,11,15,19]) # best score = 2588
+        # if self.SELECT_INDEX is not None:
+        #     select = get_select_from_index(self.SELECT_INDEX)
+        # for i in range(mesh.n_tets):
+        #     fieldids = field.tet_to_field[select,i]
+        #     for j in fieldids:
+        #         if j in past:
+        #             continue
+        #         sorter[Ictr] = j
+        #         Ictr += 1
+        #         past.add(j)
         
         ############################################################
         #                             FINALIZE                     #
@@ -523,7 +522,6 @@ class Assembler:
         simjob.port_vectors = port_vectors
         simjob.solve_ids = solve_ids
         simjob._pec_tris = pec_tris
-        simjob.set_sorter(sorter)
 
         if has_periodic:
             simjob.P = Pmat
