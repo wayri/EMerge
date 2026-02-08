@@ -725,6 +725,7 @@ class Microwave3D:
         logger.info(f'Pre-assembling matrices of {len(self.frequencies)} frequency points.')
 
         thread_local = None
+        
         if parallel:
             # Thread-local storage for per-thread resources
             thread_local = threading.local()

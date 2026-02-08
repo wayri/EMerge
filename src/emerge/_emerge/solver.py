@@ -16,7 +16,6 @@
 # <https://www.gnu.org/licenses/>.
 
 from __future__ import annotations
-
 from scipy.sparse import csr_matrix # type: ignore
 from scipy.sparse.csgraph import reverse_cuthill_mckee # type: ignore
 from scipy.sparse.linalg import bicgstab, gmres, gcrotmk, eigs, splu, factorized # type: ignore
@@ -30,6 +29,9 @@ import time
 from typing import Literal, Callable
 from enum import Enum
 from .file import Saveable
+import os
+
+_FORCED_SOLVER = os.getenv("EMERGE_MP_SOLVER", default="")
 
 _PARDISO_AVAILABLE = False
 _UMFPACK_AVAILABLE = False
@@ -60,13 +62,13 @@ try:
     _UMFPACK_AVAILABLE = True
 except ModuleNotFoundError:
     logger.debug('UMFPACK not found, defaulting to SuperLU')
-
+logger.debug('MUMPS not found, defaulting to SuperLU')
+    
 ############################################################
-#                           MUMPS                          #
+#                          MUMPS V2                        #
 ############################################################
-
 try:
-    from .solve_interfaces.mumps_interface import MUMPSInterface # type: ignore
+    from .solve_interfaces.mumps_interface import MUMPSInterfacePar, MUMPSInterfaceSeq # type: ignore
     _MUMPS_AVAILABLE = True
 except ModuleNotFoundError as e:
     logger.debug(e)
@@ -186,6 +188,8 @@ class SolveReport(Saveable):
 
 def _pfx(name: str, id: int = 0) -> str:
     return f'[{name}-j{id:03d}]'
+
+
 ############################################################
 #                 EIGENMODE FILTER ROUTINE                #
 ############################################################
@@ -289,6 +293,17 @@ def real_to_complex_block(x):
     return x_r + 1j * x_i
 
 
+
+############################################################
+#                      SOLVERTYPEENUM                     #
+############################################################
+
+class SolverType(Enum):
+    SINGLE_ONLY = 0
+    SINGLE_MT = 1
+    SINGLE_MP = 2
+    PARALLEL = 3
+    
 ############################################################
 #                  BASE CLASS DEFINITIONS                 #
 ############################################################
@@ -340,6 +355,8 @@ class Solver:
      - req_sorter: defines if this solver requires the use of a sorter algorithm. By setting
      it to False, the SolveRoutine will not use the default sorting algorithm.
     """
+    stype: SolverType = SolverType.SINGLE_ONLY
+    name: str = 'UNNAMED'
     real_only: bool = False
     req_sorter: bool = False
     released_gil: bool = False
@@ -380,6 +397,7 @@ class EigSolver:
      - req_sorter: defines if this solver requires the use of a sorter algorithm. By setting
      it to False, the SolveRoutine will not use the default sorting algorithm.
     """
+    name: str = 'UNNAMED'
     real_only: bool = False
     req_sorter: bool = False
 
@@ -457,6 +475,8 @@ class ILUPrecon(Preconditioner):
 
 class SolverBicgstab(Solver):
     """ Implements the Bi-Conjugate Gradient Stabilized method"""
+    name = 'BISCGSTAB'
+    stype = SolverType.SINGLE_ONLY
     def __init__(self):
         super().__init__()
         self.atol = 1e-5
@@ -479,6 +499,8 @@ class SolverBicgstab(Solver):
         return x, SolveReport(solver=str(self), exit_code=info)
 
 class SolverGCROTMK(Solver):
+    stype = SolverType.SINGLE_ONLY
+    name: str = 'GCROTMK'
     """ Implements the GCRO-T(m,k) Iterative solver. """
     def __init__(self):
         super().__init__()
@@ -502,9 +524,10 @@ class SolverGCROTMK(Solver):
 
 class SolverGMRES(Solver):
     """ Implements the GMRES solver. """
+    stype = SolverType.SINGLE_ONLY
     real_only = False
     req_sorter = True
-
+    name = 'GMRES'
     def __init__(self):
         super().__init__()
         self.atol = 1e-5
@@ -537,7 +560,9 @@ class SolverSuperLU(Solver):
     req_sorter: bool = False
     real_only: bool = False
     released_gil: bool = True
-
+    stype = SolverType.SINGLE_MT
+    name = 'SUPERLU'
+    
     def __init__(self, pre: str):
         super().__init__(pre)
         self.atol = 1e-5
@@ -586,7 +611,8 @@ class SolverUMFPACK(Solver):
     """ Implements the UMFPACK Sparse SP solver."""
     req_sorter = False
     real_only = False
-
+    stype = SolverType.SINGLE_MP
+    name = 'UMFPACK'
     def __init__(self, pre: str):
         super().__init__(pre)
         logger.trace(self.pre + 'Creating UMFPACK solver')
@@ -651,18 +677,19 @@ class SolverUMFPACK(Solver):
         }
         return x, SolveReport(solver=str(self), exit_code=0, aux=aux)
 
-class SolverMUMPS(Solver):
+class SolverMUMPSPar(Solver):
     """ Implements the MUMPS Sparse SP solver."""
     req_sorter = False
     real_only = False
-
+    stype = SolverType.PARALLEL
+    name = 'MUMPSPAR'
     def __init__(self, pre: str):
         super().__init__(pre)
-        logger.trace(self.pre + 'Creating MUMPS solver')
+        logger.trace(self.pre + 'Creating MUMPS-Parallel solver')
         self.A: np.ndarray = None
         self.b: np.ndarray = None
         
-        self.mumps: MUMPSInterface | None = None
+        self.mumps: MUMPSInterfacePar | None = None
         
         # SETTINGS
         self._pivoting_threshold: float = 0.001
@@ -673,12 +700,12 @@ class SolverMUMPS(Solver):
     def initialize(self):
         if self.initalized:
             return
-        logger.trace(self.pre + 'Initializing MUMPS Solver')
-        self.mumps = MUMPSInterface()
+        logger.trace(self.pre + 'Initializing MUMPS-Parallel Solver')
+        self.mumps = MUMPSInterfacePar()
         self.initalized = True
         
     def reset(self) -> None:
-        logger.trace(self.pre + 'Resetting MUMPS solver state')
+        logger.trace(self.pre + 'Resetting MUMPS-Parallel solver state')
         # if self.mumps is not None:
         #     self.mumps.destroy()
         self.fact_symb = False
@@ -688,7 +715,58 @@ class SolverMUMPS(Solver):
         return new_solver
 
     def solve(self, A, b, precon, reuse_factorization: bool = False, id: int = -1) -> tuple[np.ndarray, SolveReport]:
-        logger.info(f'{_pfx(self.pre,id)} Calling MUMPS Solver.')
+        logger.info(f'{_pfx(self.pre,id)} Calling MUMPS-Parallel Solver.')
+        if self.fact_symb is False:
+            logger.trace(f'{_pfx(self.pre,id)} Executing symbollic factorization.')
+            self.mumps.analyse_matrix(A)
+            self.fact_symb = True
+        if not reuse_factorization:
+            logger.trace(f'{_pfx(self.pre,id)} Executing numeric factorization.')
+            self.mumps.factorize(A)
+            self.A = A
+        logger.trace(f'{_pfx(self.pre,id)} Solving linear system.')
+        x, _ = self.mumps.solve(b) # ty: ignore
+        return x, SolveReport(solver=str(self), exit_code=0)
+
+class SolverMUMPSSeq(Solver):
+    """ Implements the MUMPS Sparse SP solver."""
+    req_sorter = False
+    real_only = False
+    stype = SolverType.SINGLE_MP
+    name = 'MUMPSSEQ'
+    
+    def __init__(self, pre: str):
+        super().__init__(pre)
+        logger.trace(self.pre + 'Creating MUMPS-Seq solver')
+        self.A: np.ndarray = None
+        self.b: np.ndarray = None
+        
+        self.mumps: MUMPSInterfaceSeq | None = None
+        
+        # SETTINGS
+        self._pivoting_threshold: float = 0.001
+        self.fact_symb: bool = False
+        self.initalized: bool = False
+
+    def initialize(self):
+        if self.initalized:
+            return
+        logger.trace(self.pre + 'Initializing MUMPS-Seq Solver')
+        self.mumps = MUMPSInterfaceSeq()
+        self.initalized = True
+        
+    def reset(self) -> None:
+        logger.trace(self.pre + 'Resetting MUMPS-Seq solver state')
+        # if self.mumps is not None:
+        #     self.mumps.destroy()
+        self.fact_symb = False
+    
+    def duplicate(self) -> Solver:
+        new_solver = self.__class__(self.pre)
+        return new_solver
+
+    def solve(self, A, b, precon, reuse_factorization: bool = False, id: int = -1) -> tuple[np.ndarray, SolveReport]:
+        logger.info(f'{_pfx(self.pre,id)} Calling MUMPS-Seq Solver.')
         if self.fact_symb is False:
             logger.trace(f'{_pfx(self.pre,id)} Executing symbollic factorization.')
             self.mumps.analyse_matrix(A)
@@ -706,7 +784,9 @@ class SolverPardiso(Solver):
     """ Implements the PARDISO solver through PyPardiso. """
     real_only: bool = False
     req_sorter: bool = False
-
+    stype = SolverType.PARALLEL
+    name = 'PARDISO'
+    
     def __init__(self, pre: str):
         super().__init__(pre)
         self.solver: PardisoInterface | None = None
@@ -742,6 +822,8 @@ class SolverPardiso(Solver):
 
 class SolverCuDSS(Solver):
     real_only = False
+    stype = SolverType.SINGLE_ONLY
+    name = 'CUDSS'
     
     def __init__(self, pre: str):
         super().__init__(pre)
@@ -783,7 +865,7 @@ class SolverCuDSS(Solver):
 ############################################################
 
 class SolverLAPACK(EigSolver):
-
+    name = 'LAPACK'
     
     def eig(self, 
             A: csr_matrix | csr_matrix, 
@@ -821,7 +903,8 @@ class SolverLAPACK(EigSolver):
 
 class SolverARPACK(EigSolver):
     """ Implements the Scipy ARPACK iterative eigenmode solver."""
-
+    name = 'ARPACK'
+    
     def eig(self, 
             A: csr_matrix | csr_matrix, 
             B: csr_matrix | csr_matrix,
@@ -839,6 +922,8 @@ class SmartARPACK_BMA(EigSolver):
     
     The Solver searches in a geometric range around the target wave constant.
     """
+    name = 'ARPACKBMA'
+    
     def __init__(self, pre: str):
         super().__init__(pre)
         self.symmetric_steps: int = 41
@@ -891,6 +976,8 @@ class SmartARPACK(EigSolver):
     
     The Solver searches in a geometric range around the target wave constant.
     """
+    name = 'SMARTARPACK'
+    
     def __init__(self, pre: str):
         super().__init__(pre)
         self.symmetric_steps: int = 3
@@ -953,14 +1040,17 @@ class EMSolver(Enum):
     SMART_ARPACK = 6
     SMART_ARPACK_BMA = 7
     CUDSS = 8
-    MUMPS = 9
+    MUMPSPAR = 9
+    MUMPSSEQ = 10
     
     def create_solver(self, pre: str) -> Solver | EigSolver | None:
         if self==EMSolver.UMFPACK and not _UMFPACK_AVAILABLE:
             return None
         elif self==EMSolver.PARDISO and not _PARDISO_AVAILABLE:
             return None
-        elif self==EMSolver.MUMPS and not _MUMPS_AVAILABLE:
+        elif self==EMSolver.MUMPSPAR and not _MUMPS_AVAILABLE:
+            return None
+        elif self==EMSolver.MUMPSSEQ and not _MUMPS_AVAILABLE:
             return None
         if self==EMSolver.CUDSS and not _CUDSS_AVAILABLE:
             return None
@@ -976,7 +1066,8 @@ class EMSolver(Enum):
                   6: SmartARPACK,
                   7: SmartARPACK_BMA,
                   8: SolverCuDSS,
-                  9: SolverMUMPS
+                  9: SolverMUMPSPar,
+                  10: SolverMUMPSSeq,
             
         }
         return mapper.get(self.value, None)
@@ -1014,7 +1105,10 @@ class SolveRoutine:
         self.use_preconditioner: bool = False
         self.use_direct: bool = True
         
-
+        for solverkey, solver in self.solvers.items():
+            if solver.name in _FORCED_SOLVER:
+                self.forced_solver.append(solver)
+        
     def _set_name(self, thread_nr: int, proc_nr: int):
         self.pre = f'p{int(proc_nr):02d}/t{int(thread_nr):02d}'
         
@@ -1033,7 +1127,7 @@ class SolveRoutine:
         if any(isinstance(solver, solvertype.__class__) for solvertype in self.disabled_solver):
             logger.warning(self.pre + f'The selected solver {solver} cannot be used as it is disabled.')
             return False
-        if self.parallel=='MT' and not solver.released_gil:
+        if self.parallel=='MT' and not solver.stype == SolverType.SINGLE_MT:
             logger.warning(self.pre + f'The selected solver {solver} cannot be used in MultiThreading as it does not release the GIL')
             return False
         return True
@@ -1088,11 +1182,13 @@ class SolveRoutine:
         Args:
             solver (EMSolver | Solver): The solver objects
         """
+        
         for solver in solvers:
             if isinstance(solver, EMSolver):
                 self.forced_solver = [self.solvers[solver],] 
             else:
                 self.forced_solver = [solver,]
+        os.environ["EMERGE_MP_SOLVER"] = '_'.join([solver.name for solver in self.forced_solver])
     
     def disable(self, *solvers: EMSolver) -> None:
         """Disable a given Solver class instance as the main solver. 
@@ -1452,12 +1548,16 @@ class AutomaticRoutine(SolveRoutine):
         if self.parallel=='SI':
             if _PARDISO_AVAILABLE:
                 return self._try_solver(EMSolver.PARDISO)
+            elif _MUMPS_AVAILABLE:
+                return self._try_solver(EMSolver.MUMPSPAR)
             elif _UMFPACK_AVAILABLE:
                 return self._try_solver(EMSolver.UMFPACK)
             else:
                 return self._try_solver(EMSolver.SUPERLU)
         elif self.parallel=='MP':
-            if _UMFPACK_AVAILABLE:
+            if _MUMPS_AVAILABLE:
+                return self._try_solver(EMSolver.MUMPSSEQ)
+            elif _UMFPACK_AVAILABLE:
                 return self._try_solver(EMSolver.UMFPACK)
             else:
                 return self._try_solver(EMSolver.SUPERLU)
