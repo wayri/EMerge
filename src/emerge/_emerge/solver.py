@@ -68,7 +68,7 @@ logger.debug('MUMPS not found, defaulting to SuperLU')
 #                          MUMPS V2                        #
 ############################################################
 try:
-    from .solve_interfaces.mumps_interface import MUMPSInterfacePar, MUMPSInterfaceSeq # type: ignore
+    from .solve_interfaces.mumps_interface import MUMPSInterface # type: ignore
     _MUMPS_AVAILABLE = True
 except ModuleNotFoundError as e:
     logger.debug(e)
@@ -677,88 +677,35 @@ class SolverUMFPACK(Solver):
         }
         return x, SolveReport(solver=str(self), exit_code=0, aux=aux)
 
-class SolverMUMPSPar(Solver):
-    """ Implements the MUMPS Sparse SP solver."""
-    req_sorter = False
-    real_only = False
-    stype = SolverType.PARALLEL
-    name = 'MUMPSPAR'
-    def __init__(self, pre: str):
-        super().__init__(pre)
-        logger.trace(self.pre + 'Creating MUMPS-Parallel solver')
-        self.A: np.ndarray = None
-        self.b: np.ndarray = None
-        
-        self.mumps: MUMPSInterfacePar | None = None
-        
-        # SETTINGS
-        self._pivoting_threshold: float = 0.001
-
-        self.fact_symb: bool = False
-        self.initalized: bool = False
-
-    def initialize(self):
-        if self.initalized:
-            return
-        logger.trace(self.pre + 'Initializing MUMPS-Parallel Solver')
-        self.mumps = MUMPSInterfacePar()
-        self.initalized = True
-        
-    def reset(self) -> None:
-        logger.trace(self.pre + 'Resetting MUMPS-Parallel solver state')
-        # if self.mumps is not None:
-        #     self.mumps.destroy()
-        self.fact_symb = False
-    
-    def duplicate(self) -> Solver:
-        new_solver = self.__class__(self.pre)
-        return new_solver
-
-    def solve(self, A, b, precon, reuse_factorization: bool = False, id: int = -1) -> tuple[np.ndarray, SolveReport]:
-        logger.info(f'{_pfx(self.pre,id)} Calling MUMPS-Parallel Solver.')
-        if self.fact_symb is False:
-            logger.trace(f'{_pfx(self.pre,id)} Executing symbollic factorization.')
-            self.mumps.analyse_matrix(A)
-            self.fact_symb = True
-        if not reuse_factorization:
-            logger.trace(f'{_pfx(self.pre,id)} Executing numeric factorization.')
-            self.mumps.factorize(A)
-            self.A = A
-        logger.trace(f'{_pfx(self.pre,id)} Solving linear system.')
-        x, _ = self.mumps.solve(b) # ty: ignore
-        return x, SolveReport(solver=str(self), exit_code=0)
-
-class SolverMUMPSSeq(Solver):
+class SolverMUMPS(Solver):
     """ Implements the MUMPS Sparse SP solver."""
     req_sorter = False
     real_only = False
     stype = SolverType.SINGLE_MP
-    name = 'MUMPSSEQ'
     
     def __init__(self, pre: str):
         super().__init__(pre)
-        logger.trace(self.pre + 'Creating MUMPS-Seq solver')
+        logger.trace(self.pre + 'Creating MUMPS solver')
         self.A: np.ndarray = None
         self.b: np.ndarray = None
         
-        self.mumps: MUMPSInterfaceSeq | None = None
+        self.mumps: MUMPSInterface | None = None
         
         # SETTINGS
         self._pivoting_threshold: float = 0.001
+
         self.fact_symb: bool = False
         self.initalized: bool = False
 
     def initialize(self):
         if self.initalized:
             return
-        logger.trace(self.pre + 'Initializing MUMPS-Seq Solver')
-        self.mumps = MUMPSInterfaceSeq()
+        logger.trace(self.pre + 'Initializing MUMPS Solver')
+        self.mumps = MUMPSInterface()
         self.initalized = True
         
     def reset(self) -> None:
-        logger.trace(self.pre + 'Resetting MUMPS-Seq solver state')
-        # if self.mumps is not None:
-        #     self.mumps.destroy()
+        logger.trace(self.pre + 'Resetting MUMPS solver state')
         self.fact_symb = False
     
     def duplicate(self) -> Solver:
@@ -766,7 +713,7 @@ class SolverMUMPSSeq(Solver):
         return new_solver
 
     def solve(self, A, b, precon, reuse_factorization: bool = False, id: int = -1) -> tuple[np.ndarray, SolveReport]:
-        logger.info(f'{_pfx(self.pre,id)} Calling MUMPS-Seq Solver.')
+        logger.info(f'{_pfx(self.pre,id)} Calling MUMPS Solver.')
         if self.fact_symb is False:
             logger.trace(f'{_pfx(self.pre,id)} Executing symbollic factorization.')
             self.mumps.analyse_matrix(A)
@@ -1040,17 +987,14 @@ class EMSolver(Enum):
     SMART_ARPACK = 6
     SMART_ARPACK_BMA = 7
     CUDSS = 8
-    MUMPSPAR = 9
-    MUMPSSEQ = 10
+    MUMPS = 9
     
     def create_solver(self, pre: str) -> Solver | EigSolver | None:
         if self==EMSolver.UMFPACK and not _UMFPACK_AVAILABLE:
             return None
         elif self==EMSolver.PARDISO and not _PARDISO_AVAILABLE:
             return None
-        elif self==EMSolver.MUMPSPAR and not _MUMPS_AVAILABLE:
-            return None
-        elif self==EMSolver.MUMPSSEQ and not _MUMPS_AVAILABLE:
+        elif self==EMSolver.MUMPS and not _MUMPS_AVAILABLE:
             return None
         if self==EMSolver.CUDSS and not _CUDSS_AVAILABLE:
             return None
@@ -1066,8 +1010,7 @@ class EMSolver(Enum):
                   6: SmartARPACK,
                   7: SmartARPACK_BMA,
                   8: SolverCuDSS,
-                  9: SolverMUMPSPar,
-                  10: SolverMUMPSSeq,
+                  9: SolverMUMPS,
             
         }
         return mapper.get(self.value, None)
@@ -1549,15 +1492,13 @@ class AutomaticRoutine(SolveRoutine):
             if _PARDISO_AVAILABLE:
                 return self._try_solver(EMSolver.PARDISO)
             elif _MUMPS_AVAILABLE:
-                return self._try_solver(EMSolver.MUMPSPAR)
+                return self._try_solver(EMSolver.MUMPS)
             elif _UMFPACK_AVAILABLE:
                 return self._try_solver(EMSolver.UMFPACK)
             else:
                 return self._try_solver(EMSolver.SUPERLU)
         elif self.parallel=='MP':
-            if _MUMPS_AVAILABLE:
-                return self._try_solver(EMSolver.MUMPSSEQ)
-            elif _UMFPACK_AVAILABLE:
+            if _UMFPACK_AVAILABLE:
                 return self._try_solver(EMSolver.UMFPACK)
             else:
                 return self._try_solver(EMSolver.SUPERLU)
