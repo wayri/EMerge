@@ -24,7 +24,7 @@ L = 4*rad0                      # helix axial length
 porth = 2*mm                    # vertical height of the feed extrusion
 
 # --- Simulation object -------------------------------------------------------
-model = em.Simulation('HelixAntennas', loglevel='INFO')
+model = em.Simulation('HelixAntennas')
 model.check_version("2.2.1") # Checks version compatibility.
 
 dfeed = 3*mm                    # straight feed length before the helix starts
@@ -76,7 +76,9 @@ port_sel = feed.boundary(exclude=('front','back'))# port faces on the feed (two 
 # --- Boundary conditions -----------------------------------------------------
 abc = model.mw.bc.AbsorbingBoundary(abc_sel)                     # open-space termination
 port_sel = model.mw.bc.LumpedPort(port_sel, 1, feed_poly.length, porth, em.ZAX ,Z0=130)  # lumped port (Z-axis)
+
 # --- Solve frequency sweep ---------------------------------------------------
+
 data = model.mw.run_sweep()
 
 # --- S-parameters: access and plots -----------------------------------------

@@ -12,7 +12,7 @@ class MUMPSInterface:
         self.ctx.set_silent()
         self._analysed = False
         self._factorized = False
-        self.ctx.id.icntl[6]  = 5   # METIS
+        self.ctx.id.icntl[6]  = 5      # METIS
         self.ctx.id.icntl[27] = 1      # ICNTL(28)
         self.ctx.id.icntl[28] = 0      # ICNTL(29) automatic (safe)
         self.ctx.id.icntl[47] = 0

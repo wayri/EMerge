@@ -24,7 +24,7 @@ import numpy as np
 mm = 0.001
 
 # Then we create our simulation object
-model = em.Simulation('ParallelPlates')
+model = em.Simulation('ParallelPlates', loglevel='DEBUG')
 
 # Parallel plate transmision lines are infinitely big. To model a finite volume we have to use the appropriate boundary conditions
 # We will simulate a wave at 10GHz so we dimension it appropriately as a box of 20mm wide, 20mm deep and 50mm long.
@@ -36,6 +36,7 @@ model.check_version("2.2.1")
 
 # Before we can generate the mesh we have to set a simulation frequency (range)
 model.mw.set_frequency(10e9)
+
 # Then we can generate the mesh
 model.generate_mesh()
 # And view the output

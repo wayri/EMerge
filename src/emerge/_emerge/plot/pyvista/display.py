@@ -77,23 +77,32 @@ def _merge(lst: Iterable[GeoObject | Selection]) -> Selection:
     else:
         return Selection(all_tags)
 
+
+def _print_coords(x1, y1, x2, y2, z):
+    print(f'lp = pcb.lumped_port_pts(({x1:.6f},{y1:.6f}),({x2:.6f},{y2:.6f}),{z:.6f})')
+    
 class PVDisplay(EMergeDisplay):
 
 
     def __post_init__(self, state: SimState):
         self._state: SimState = state
         self._selector._set_encoder_function(encode_data)
-    
+        self._plot.add_key_event("l", self._register_printer) # type: ignore
+        
     def clean(self) -> None:
         del self._state
         self._state = None
         
     def _get_edge_length(self):
         return max(1e-3, min(self._mesh.edge_lengths))
+    
     ############################################################
     #                       SPECIFIC METHODS                  #
     ############################################################
     
+    def _register_printer(self):
+        self._ruler._call_coords = _print_coords
+        
     def _volume_edges(self, obj: GeoObject | Selection) -> pv.UnstructuredGrid:
         """Adds the edges of objects
 
@@ -197,8 +206,9 @@ class PVDisplay(EMergeDisplay):
                       texture=texture)
 
         mesh_obj = self._volume_edges(_select(obj))
+        
         if mesh_obj is not None:
-            self._plot.add_mesh(mesh_obj, line_width=self.set.theme.geo_edge_width, color=self.set.theme.geo_edge_color, show_edges=True)
+            self._plot.add_mesh(mesh_obj, line_width=self.set.theme.geo_edge_width, color=self.set.theme.geo_edge_color, pickable=True, show_edges=True)
         else:
             return
         

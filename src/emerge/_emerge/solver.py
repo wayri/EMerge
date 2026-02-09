@@ -63,7 +63,6 @@ try:
     _UMFPACK_AVAILABLE = True
 except ModuleNotFoundError:
     logger.debug('UMFPACK not found, defaulting to SuperLU')
-logger.debug('MUMPS not found, defaulting to SuperLU')
     
 ############################################################
 #                           MUMPS                          #
@@ -72,7 +71,6 @@ try:
     from .solve_interfaces.mumps_interface import MUMPSInterface # type: ignore
     _MUMPS_AVAILABLE = True
 except ModuleNotFoundError as e:
-    logger.debug(e)
     logger.debug('MUMPS not found, defaulting to SuperLU')
   
 
@@ -201,11 +199,11 @@ class SolveReport(Saveable):
 def _pfx(name: str, id: int = 0) -> str:
     return f'[{name}-j{id:03d}]'
 
-def is_numerically_complex_symmetric(A, rtol=1e-3) -> tuple[float, bool]:
-    diff = A - A.T
-    num = np.linalg.norm(np.abs(diff.data))
-    den = np.linalg.norm(np.abs(A.data))
-    return num/den, num <= rtol * den
+def is_numerically_complex_symmetric(A, rtol=0.01) -> tuple[float, bool]:
+    num = np.linalg.norm((A - A.T).data)
+    den = np.linalg.norm(A.data)
+    ratio = num/den
+    return ratio, ratio <= rtol
 
 ############################################################
 #                 EIGENMODE FILTER ROUTINE                #
@@ -768,13 +766,13 @@ class SolverAASDS(Solver):
         self.initalized: bool = False
 
     def set_symmetry(self, complex_symmetric: bool) -> None:
-        self._csym = complex_symmetric
+        self.aasds._csym = complex_symmetric
         
     def initialize(self):
         if self.initalized:
             return
         logger.trace(self.pre + 'Initializing Apple Accelerate Solver')
-        self.aasds = AASDSInterface(self._csym)
+        self.aasds = AASDSInterface()
         self.initalized = True
         
     def reset(self) -> None:
@@ -850,13 +848,17 @@ class SolverCuDSS(Solver):
         self._cudss: CuDSSInterface | None = None
         self.fact_symb: bool = False
         self.fact_numb: bool = False
-        
+        self._csym: bool = True
+
     def initialize(self) -> None:
         if self.initialized:
             return
         self._cudss = CuDSSInterface()
         self._cudss._PRES = 2
         self.initialized = True
+    
+    def set_symmetry(self, complex_symmetric: bool) -> None:
+        self._cudss._csym = complex_symmetric
         
     def reset(self) -> None:
         self.fact_symb = False
@@ -1121,6 +1123,7 @@ class SolveRoutine:
         self.forced_solver: list[Solver | EigSolver] = []
         self.disabled_solver: list[type[Solver]|type[EigSolver]] = []
 
+        self.force_symmetric: bool = False
         self.use_sorter: bool = False
         self.use_preconditioner: bool = False
         self.use_direct: bool = True
@@ -1191,6 +1194,7 @@ class SolveRoutine:
         new_routine.parallel = self.parallel
         new_routine.smart_search = self.smart_search
         new_routine.forced_solver = self.forced_solver
+        new_routine.force_symmetric = self.force_symmetric
         for tpe, solver in self.solvers.items():
             new_routine.solvers[tpe] = solver.duplicate()
         return new_routine
@@ -1273,6 +1277,7 @@ class SolveRoutine:
         self.sorter.reset()
         self.parallel = 'SI'
         self.smart_search = False
+        self.force_symmetric = False
         if reset_solver_preference:
             self.forced_solver = []
             self.disabled_solver = []
@@ -1383,11 +1388,13 @@ class SolveRoutine:
         Returns:
             np.ndarray: The resultant solution.
         """
-        
-        symmetry, is_symemtric = is_numerically_complex_symmetric(A)
-        logger.info(f'Matrix complex symmetric = {is_symemtric} with tolerance = {symmetry:.5f}')
+        symmetry, is_symmetric = is_numerically_complex_symmetric(A)
+        logger.debug(f'Matrix complex symmetric = {is_symmetric} with tolerance = {symmetry:.5f}')
         solver: Solver = self._get_solver(A, b)
+        
         solver.initialize()
+        solver.set_symmetry(is_symmetric or self.force_symmetric)
+        
         NF = A.shape[0]
         NS = solve_ids.shape[0]
 
@@ -1421,6 +1428,11 @@ class SolveRoutine:
         start = time.time()
         
         x_solved, report = solver.solve(Asorted, bsorted, self.precon, reuse_factorization=reuse, id=id)
+        
+        # S = 0.5 * (Asorted + Asorted.T)
+        # K = 0.5 * (Asorted - Asorted.T)
+        # ratio = np.linalg.norm(K @ x_solved) / np.linalg.norm(S @ x_solved)
+        # logger.warning(f'Ratio = {ratio}')
         
         end = time.time()
         simtime = end-start

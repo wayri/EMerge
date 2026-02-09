@@ -34,17 +34,21 @@ class AASDSInterface:
         - Real SPD: factorization='cholesky', symmetry='symmetric'
     """
     
-    def __init__(self, complex_symmetric: bool, verbose=0):
+    def __init__(self, verbose=0):
         self._solver = None
         self._factorization = Factorization.LU
-        self._symmetry: Symmetry = Symmetry.NONSYMMETRIC
-        if complex_symmetric:
-            self._symmetry = Symmetry.SYMMETRIC
-        else:
-            self._symmetry = Symmetry.NONSYMMETRIC
+        self._csym: bool = True
+        
         self._factored = False
         self.verbose = verbose
     
+    @property
+    def _symmetry(self) -> Symmetry:
+        if self._csym:
+            return Symmetry.SYMMETRIC
+        else:
+            return Symmetry.NONSYMMETRIC
+        
     def analyse(self, A):
         """
         Symbolic factorization
@@ -143,7 +147,7 @@ class AASDSInterface:
     
     def __repr__(self):
         status = "factored" if self._factored else "not factored"
-        return f"AccelerateInterface(factorization='{self._factorization}', symmetry='{self._symmetry}', {status})"
+        return f"AccelerateInterface(factorization='{self._factorization}', symmetry='{self._csym}', {status})"
 
 
 # Convenience function matching SPOOLES pattern
