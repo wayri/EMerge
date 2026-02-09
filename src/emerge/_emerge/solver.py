@@ -18,7 +18,7 @@
 from __future__ import annotations
 from scipy.sparse import csr_matrix # type: ignore
 from scipy.sparse.csgraph import reverse_cuthill_mckee # type: ignore
-from scipy.sparse.linalg import bicgstab, gmres, gcrotmk, eigs, splu, factorized # type: ignore
+from scipy.sparse.linalg import bicgstab, gmres, gcrotmk, eigs, splu # type: ignore
 from scipy.linalg import eig # type: ignore
 from scipy import sparse # type: ignore
 from dataclasses import dataclass, field
@@ -37,6 +37,7 @@ _PARDISO_AVAILABLE = False
 _UMFPACK_AVAILABLE = False
 _CUDSS_AVAILABLE = False
 _MUMPS_AVAILABLE = False
+_AASDS_AVAILABLE = False
 
 """ Check if the PC runs on a non-ARM architechture
 If so, attempt to import PyPardiso (if its installed)
@@ -65,7 +66,7 @@ except ModuleNotFoundError:
 logger.debug('MUMPS not found, defaulting to SuperLU')
     
 ############################################################
-#                          MUMPS V2                        #
+#                           MUMPS                          #
 ############################################################
 try:
     from .solve_interfaces.mumps_interface import MUMPSInterface # type: ignore
@@ -73,7 +74,18 @@ try:
 except ModuleNotFoundError as e:
     logger.debug(e)
     logger.debug('MUMPS not found, defaulting to SuperLU')
-    
+  
+
+############################################################
+#                          AASDS                           #
+############################################################
+try:
+    from .solve_interfaces.aasds_interface import AASDSInterface # type: ignore
+    _AASDS_AVAILABLE = True
+except ModuleNotFoundError as e:
+    logger.debug(e)
+    logger.debug('AASDS not found, defaulting to SuperLU')
+   
 ############################################################
 #                           CUDSS                          #
 ############################################################
@@ -189,6 +201,11 @@ class SolveReport(Saveable):
 def _pfx(name: str, id: int = 0) -> str:
     return f'[{name}-j{id:03d}]'
 
+def is_numerically_complex_symmetric(A, rtol=1e-3) -> tuple[float, bool]:
+    diff = A - A.T
+    num = np.linalg.norm(np.abs(diff.data))
+    den = np.linalg.norm(np.abs(A.data))
+    return num/den, num <= rtol * den
 
 ############################################################
 #                 EIGENMODE FILTER ROUTINE                #
@@ -369,6 +386,9 @@ class Solver:
     def __str__(self) -> str:
         return f'{self.__class__.__name__}'
     
+    def set_symmetry(self, complex_symmetric: bool) -> None:
+        pass
+
     def initialize(self) -> None:
         return None
 
@@ -727,6 +747,59 @@ class SolverMUMPS(Solver):
         return x, SolveReport(solver=str(self), exit_code=0)
 
 
+class SolverAASDS(Solver):
+    """ Implements the Apple Accelerate Sparse Direct solver."""
+    req_sorter = False
+    real_only = False
+    stype = SolverType.SINGLE_MP
+    name = 'AASDS'
+    def __init__(self, pre: str):
+        super().__init__(pre)
+        logger.trace(self.pre + 'Creating Apple Accelerate solver')
+        self.A: np.ndarray = None
+        self.b: np.ndarray = None
+        
+        self.aasds: AASDSInterface | None = None
+        self._csym: bool = True
+        # SETTINGS
+        self._pivoting_threshold: float = 0.001
+
+        self.fact_symb: bool = False
+        self.initalized: bool = False
+
+    def set_symmetry(self, complex_symmetric: bool) -> None:
+        self._csym = complex_symmetric
+        
+    def initialize(self):
+        if self.initalized:
+            return
+        logger.trace(self.pre + 'Initializing Apple Accelerate Solver')
+        self.aasds = AASDSInterface(self._csym)
+        self.initalized = True
+        
+    def reset(self) -> None:
+        logger.trace(self.pre + 'Resetting Apple Accelerate solver state')
+        self.fact_symb = False
+        self._csym = False
+    
+    def duplicate(self) -> Solver:
+        new_solver = self.__class__(self.pre)
+        return new_solver
+
+    def solve(self, A, b, precon, reuse_factorization: bool = False, id: int = -1) -> tuple[np.ndarray, SolveReport]:
+        logger.info(f'{_pfx(self.pre,id)} Calling Apple Accelerate Solver.')
+        if self.fact_symb is False:
+            logger.trace(f'{_pfx(self.pre,id)} Executing symbollic factorization.')
+            self.aasds.analyse(A)
+            self.fact_symb = True
+        if not reuse_factorization:
+            logger.trace(f'{_pfx(self.pre,id)} Executing numeric factorization.')
+            self.aasds.factorize(A)
+            self.A = A
+        logger.trace(f'{_pfx(self.pre,id)} Solving linear system.')
+        x, _ = self.aasds.solve(b) # ty: ignore
+        return x, SolveReport(solver=str(self), exit_code=0)
+
 class SolverPardiso(Solver):
     """ Implements the PARDISO solver through PyPardiso. """
     real_only: bool = False
@@ -988,9 +1061,12 @@ class EMSolver(Enum):
     SMART_ARPACK_BMA = 7
     CUDSS = 8
     MUMPS = 9
+    AASDS = 10
     
     def create_solver(self, pre: str) -> Solver | EigSolver | None:
         if self==EMSolver.UMFPACK and not _UMFPACK_AVAILABLE:
+            return None
+        elif self==EMSolver.AASDS and not _AASDS_AVAILABLE:
             return None
         elif self==EMSolver.PARDISO and not _PARDISO_AVAILABLE:
             return None
@@ -1011,6 +1087,7 @@ class EMSolver(Enum):
                   7: SmartARPACK_BMA,
                   8: SolverCuDSS,
                   9: SolverMUMPS,
+                  10: SolverAASDS,
             
         }
         return mapper.get(self.value, None)
@@ -1306,6 +1383,9 @@ class SolveRoutine:
         Returns:
             np.ndarray: The resultant solution.
         """
+        
+        symmetry, is_symemtric = is_numerically_complex_symmetric(A)
+        logger.info(f'Matrix complex symmetric = {is_symemtric} with tolerance = {symmetry:.5f}')
         solver: Solver = self._get_solver(A, b)
         solver.initialize()
         NF = A.shape[0]
@@ -1345,7 +1425,7 @@ class SolveRoutine:
         end = time.time()
         simtime = end-start
         logger.info(f'{_pfx(self.pre,id)} Elapsed time taken: {simtime:.3f} seconds')
-        logger.debug(f'{_pfx(self.pre,id)} O(N^1.8he) performance = {(NS**(1.8))/((end-start+1e-6)*1e6):.1f} MDoF/s')
+        logger.debug(f'{_pfx(self.pre,id)} O(N^2) performance = {(NS**(2))/((end-start+1e-6)*1e6):.1f} MDoF/s')
         
         if self.use_sorter and solver.req_sorter:
             x = self.sorter.unsort(x_solved)
@@ -1493,17 +1573,22 @@ class AutomaticRoutine(SolveRoutine):
                 return self._try_solver(EMSolver.PARDISO)
             elif _MUMPS_AVAILABLE:
                 return self._try_solver(EMSolver.MUMPS)
+            if _AASDS_AVAILABLE:
+                return self._try_solver(EMSolver.AASDS)
             elif _UMFPACK_AVAILABLE:
                 return self._try_solver(EMSolver.UMFPACK)
             else:
                 return self._try_solver(EMSolver.SUPERLU)
         elif self.parallel=='MP':
+            if _AASDS_AVAILABLE:
+                return self._try_solver(EMSolver.AASDS)
             if _UMFPACK_AVAILABLE:
                 return self._try_solver(EMSolver.UMFPACK)
             else:
                 return self._try_solver(EMSolver.SUPERLU)
         elif self.parallel=='MT':
             return self._try_solver(EMSolver.SUPERLU)
+        
         return self._try_solver(EMSolver.SUPERLU)
     
 

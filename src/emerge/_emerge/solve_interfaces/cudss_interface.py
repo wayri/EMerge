@@ -56,19 +56,6 @@ def _c_pointer(arry) -> int:
 
 
 ############################################################
-#                         FUNCTIONS                        #
-############################################################
-
-def is_complex_symmetric(A, rtol=1e-12, atol=0.0):
-    D = A-A.T
-    D.sum_duplicates()
-    if D.nnz == 0:
-        return True
-    max_diff = float(np.abs(D.data).max())
-    max_A = float(np.abs(A.data).max()) if A.nnz else 0.0
-    return (max_diff <= atol) if max_A == 0.0 else (max_diff <= atol + rtol * max_A)
-
-############################################################
 #                         INTERFACE                        #
 ############################################################
 
@@ -112,7 +99,7 @@ class CuDSSInterface(metaclass=Singleton):
         self._COMP: bool = True
         self._PRES: int = 2
         self._COL_IDS = None
-
+        self._csym: bool = True
         self._initialized = False
 
         param = cudss.ConfigParam.REORDERING_ALG
@@ -174,7 +161,7 @@ class CuDSSInterface(metaclass=Singleton):
         """
         self.N = A.shape[0]
 
-        if is_complex_symmetric(A, rtol=1e-12, atol=1e-15):
+        if self._csym:
             self.MTYPE = cudss.MatrixType.SYMMETRIC
         else:
             self.MTYPE = cudss.MatrixType.GENERAL

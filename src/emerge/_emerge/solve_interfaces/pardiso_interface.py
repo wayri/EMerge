@@ -292,7 +292,7 @@ class PardisoInterface:
 
         self._pardiso_interface.restype = None
         self._pardiso_interface.argtypes = PARDISO_ARG_TYPES
-
+        
         self.PT = np.zeros(64, dtype=PT_B)
         self.IPARM = np.zeros(64, dtype=np.int32)
         self.PERM = np.zeros(0, dtype=np.int32)
