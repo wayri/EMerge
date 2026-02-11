@@ -662,7 +662,7 @@ class Simulation:
         self.state.store_geometry_data()
         
         logger.trace(f'Parsed geometries = {self.state.geos}')
-        
+        self.state.manager.self_destruct()
         self.mesher.submit_objects(self.state.current_geo_state)
         
         self._defined_geometries = True

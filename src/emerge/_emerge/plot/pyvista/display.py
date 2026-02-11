@@ -190,18 +190,22 @@ class PVDisplay(EMergeDisplay):
                    volume_mesh: bool = True, 
                    label: bool = False, 
                    label_text: str | None = None, 
-                   texture: str | None = None, *args, **kwargs):
+                   texture: str | None = None,
+                   opacity: float = 1.0,
+                   *args, **kwargs):
         
         if isinstance(obj, GeoObject):
             if obj._hidden:
                 return
-        
+        if opacity is None:
+            opacity = 1.0
+        opacity = min(obj.opacity, opacity)
         
         self._add_obj(self.mesh(obj), obj.dim, 
                       plot_mesh=mesh, 
                       volume_mesh=volume_mesh, 
                       metal=obj._metal, 
-                      opacity=obj.opacity,
+                      opacity=opacity,
                       color=obj.color_rgb, 
                       texture=texture)
 
@@ -224,15 +228,15 @@ class PVDisplay(EMergeDisplay):
                 labels.append(label_text)
             self._plot.add_point_labels(points, labels, shape_color=self.set.theme.label_color)
             
-    def add_objects(self, *objects, **kwargs) -> None:
+    def add_objects(self, opacity: float = 1.0, *objects, **kwargs) -> None:
         """Add a series of objects provided as a list of arguments
         """
         for obj in objects:
-            self.add_object(obj, **kwargs)
+            self.add_object(obj, opacity=opacity, **kwargs)
     
-    def populate(self, **kwargs) -> None:
+    def populate(self, opacity: float = 1.0, **kwargs) -> None:
         for obj in self._state.current_geo_state:
-            self.add_object(obj, **kwargs)
+            self.add_object(obj, opacity=opacity, **kwargs)
 
     def add_scatter(self, xs: np.ndarray, ys: np.ndarray, zs: np.ndarray):
         """Adds a scatter point cloud

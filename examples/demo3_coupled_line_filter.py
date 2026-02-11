@@ -83,7 +83,6 @@ pcb.determine_bounds(topmargin=150, bottommargin=150)
 # --- Generate dielectric and air blocks ----------------------------------
 diel = pcb.generate_pcb()                     # substrate dielectric block
 air = pcb.generate_air(4 * th)                # surrounding air box
-
 # --- Define ports for simulation ----------------------------------------
 p1 = pcb.modal_port(pcb['p1'], width_multiplier=5, height=4 * th)
 p2 = pcb.modal_port(pcb['p2'], width_multiplier=5, height=4 * th)
@@ -94,7 +93,6 @@ model.mw.set_frequency_range(5.2e9, 6.2e9, 31)  # 5.2–6.2 GHz, 31 points
 
 # --- Assemble geometry into simulation -----------------------------------
 model.commit_geometry()
-
 # --- Mesh refinement -----------------------------------------------------
 model.mesher.set_boundary_size(stripline, 0.5 * mm, growth_rate=10)
 model.mesher.set_face_size(p1, 0.5*mm)
@@ -102,8 +100,7 @@ model.mesher.set_face_size(p2, 0.5*mm)
 
 # --- Mesh generation and view --------------------------------------------
 model.generate_mesh()                    # build mesh
-model.view(plot_mesh=True)                             # visualize with Gmsh viewer
-
+model.view()                             # visualize with Gmsh viewer
 # --- Boundary conditions ------------------------------------------------
 port1 = model.mw.bc.ModalPort(p1, 1, modetype='TEM')
 port2 = model.mw.bc.ModalPort(p2, 2, modetype='TEM')

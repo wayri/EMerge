@@ -2,7 +2,7 @@
 Apple Accelerate Sparse Solver Interface
 """
 
-from emerge_aasds import AccelerateInterface, Factorization, Symmetry
+from emerge_aasds import AccelerateInterface, Factorization, Symmetry, Scaling, Ordering
 import time
 
 
@@ -61,6 +61,8 @@ class AASDSInterface:
         t0 = time.time()
         self._solver = AccelerateInterface(
             factorization=self._factorization,
+            ordering=Ordering.MTMETIS,
+            pivot_tolerance=0.001,
             symmetry=self._symmetry,
             verbose=0  # We handle our own verbosity
         )

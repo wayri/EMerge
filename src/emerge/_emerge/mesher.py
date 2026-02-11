@@ -239,6 +239,7 @@ class Mesher:
                                         2: dict(),
                                         3: dict()}
         if len(objects) > 0: # type: ignore
+            print(final_dimtags, embedding_dimtags)
             dimtags, output_mapping = gmsh.model.occ.fragment(final_dimtags, embedding_dimtags)
             for domain, mapping in zip(final_dimtags + embedding_dimtags, output_mapping):
                 tag_mapping[domain[0]][domain[1]] = [o[1] for o in mapping]

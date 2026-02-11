@@ -96,6 +96,12 @@ class _GeometryManager:
     def get_surfaces(self) -> list[GeoSurface]:
         return [geo for geo in self.all_geometries() if geo.dim==2]
     
+    def self_destruct(self):
+        print(self.geometry_list[self.active].values())
+        for geo in self.geometry_list[self.active].values():
+            geo._do_self_destruct()
+        gmsh.model.occ.synchronize()
+        
     def all_geometries(self, model: str | None = None) -> list[GeoObject]:
         if model is None:
             model = self.active
@@ -563,6 +569,7 @@ class GeoObject(Saveable):
         self._aux_data: dict[str, Any] = dict()
         self._base_priority: int = 10.0
         self._sub_priority: int = 0
+        self._self_destruct: bool = False
 
         self._exists: bool = True
         
@@ -578,7 +585,11 @@ class GeoObject(Saveable):
             float: The Priority of the geometry material
         """
         return self._base_priority + self._sub_priority / 2
-                    
+    
+    def _do_self_destruct(self) -> None:
+        if self._self_destruct:
+            self.remove()     
+        
     def _fill_face_pointers(self) -> None:
         """ Fills the list of all face pointers of this object
         """
@@ -751,6 +762,7 @@ class GeoObject(Saveable):
         new_obj._aux_data = self._aux_data.copy()
         new_obj._base_priority = self._base_priority
         new_obj._exists = self._exists
+        new_obj._self_destruct = self._self_destruct
         return new_obj
 
     def replace_tags(self, tagmap: dict[int, list[int]]):
