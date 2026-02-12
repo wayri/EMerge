@@ -570,6 +570,9 @@ class GeoObject(Saveable):
         self._base_priority: int = 10.0
         self._sub_priority: int = 0
         self._self_destruct: bool = False
+        
+        self._get_boundary_cache: list[tuple[int,int]] = None
+        self._cached: bool = False
 
         self._exists: bool = True
         
@@ -626,6 +629,19 @@ class GeoObject(Saveable):
         """
         return self._aux_data.get(name, None)
     
+    def _get_boundary(self) -> list[tuple[float, float]]:
+        if not self._cached:
+            return gmsh.model.get_boundary(self.dimtags, True, False)
+        else:
+            return self._get_boundary_cache
+        
+    def _cache_gmsh(self) -> None:
+        """
+        Caches GMSH calls for after loading.
+        """
+        self._get_boundary_cache = gmsh.model.get_boundary(self.dimtags, True, False)
+        self._cached = True
+        
     def give_name(self, name: str | None = None) -> GeoObject:
         """Assign a name to this object
 
@@ -960,7 +976,7 @@ class GeoObject(Saveable):
         
         for name in exclude:
             tags.extend(self.face(name, tool=tool).tags)
-        dimtags = gmsh.model.get_boundary(self.dimtags, True, False)
+        dimtags = self._get_boundary()
         selname = 'Boundary'
         if exclude:
             selname = selname + 'Except[' + ','.join(exclude) + ']'
@@ -1091,8 +1107,29 @@ class GeoVolume(GeoObject):
         else:
             self.tags = [tag,]
 
+        self._normals_cache: list[tuple[float,float,float]] = None
+        self._origins_cache: list[tuple[float,float,float]] = None
+        
         self._fill_face_pointers()
         self._autoname()
+        
+    def _cache_gmsh(self):
+        self._get_boundary_cache = gmsh.model.get_boundary(self.dimtags, True, False)
+        self._normals_cache = [gmsh.model.get_normal(t, [0,0]) for d,t, in self._get_boundary_cache]
+        self._origins_cache = [gmsh.model.occ.get_center_of_mass(d, t) for d,t in self._get_boundary_cache]
+        self._cached = True
+    
+    def _get_normal(self):
+        if not self._cached:
+            return [gmsh.model.get_normal(t, [0,0]) for d,t, in self._get_boundary_cache]
+        else:
+            return self._normals_cache
+        
+    def _get_center_of_mass(self) -> list[tuple[float,float,float]]:
+        if not self._cached:
+            return [gmsh.model.occ.get_center_of_mass(d, t) for d,t in self._get_boundary_cache]
+        else:
+            return self._normals_cache
         
     @property
     def selection(self) -> DomainSelection:
@@ -1159,10 +1196,10 @@ class GeoVolume(GeoObject):
         Returns:
             FaceSelection: The resultant face selection
         """
-        dimtags = gmsh.model.get_boundary(self.dimtags, True, False)
+        dimtags = self._get_boundary()
         
-        normals = [gmsh.model.get_normal(t, [0,0]) for d,t, in dimtags]
-        origins = [gmsh.model.occ.get_center_of_mass(d, t) for d,t in dimtags]
+        normals = self._get_normal()
+        origins = self._get_center_of_mass()
         
         tool_tags = []
         for key, tool in self._tools.items():

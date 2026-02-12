@@ -665,6 +665,10 @@ class Simulation:
         self.state.manager.self_destruct()
         self.mesher.submit_objects(self.state.current_geo_state)
         
+        # Cache GMSH properties
+        for geo in self.all_geos():
+            geo._cache_gmsh()
+        
         self._defined_geometries = True
         self.display._facetags = [dt[1] for dt in gmsh.model.get_entities(2)]
     
