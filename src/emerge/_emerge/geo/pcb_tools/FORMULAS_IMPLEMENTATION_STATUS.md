@@ -5,11 +5,7 @@ This document is the detailed math reference for the implemented transmission-li
 
 - EMerge calculator implementation:
   - `EMerge/src/emerge/_emerge/geo/pcb_tools/calculator.py`
-- Reference library implementation:
-  - `pcb_libs/pcb_libs/pcb_calculator.py`
-- Validation tests:
-  - `tests/test_formula_validation.py`
-  - `tests/test_emerge_calculator_validation.py`
+
 
 ## 1.1) How To Validate Formulas In Practice
 Use layered validation, from fastest to highest confidence:
