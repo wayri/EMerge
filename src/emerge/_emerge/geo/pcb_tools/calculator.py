@@ -73,10 +73,10 @@
 # - PCBCalculator: __init__, z0, layer_index, z, layer_distance, effective_er
 #
 import numpy as np
-import ctypes
+from scipy.special import jv, yv
 from emsutil import Material
-from ...const import Z0 as n0
 
+n0 = 376.73031366857
 PI = np.pi
 TAU = 2 * PI
 C0 = 299_792_458.0
@@ -117,43 +117,11 @@ def _coth(x):
 def _sech(x):
     return 1.0 / np.cosh(_asf(x))
 
-
-def _load_bessel_runtime():
-    """Load jn/yn Bessel functions from C runtime if available."""
-    for lib in ("msvcrt.dll", "ucrtbase.dll", "libm.so.6", "libm.so", "libSystem.B.dylib"):
-        try:
-            dll = ctypes.CDLL(lib)
-        except Exception:
-            continue
-
-        for jname, yname in (("_jn", "_yn"), ("jn", "yn")):
-            if hasattr(dll, jname) and hasattr(dll, yname):
-                jn = getattr(dll, jname)
-                yn = getattr(dll, yname)
-                jn.argtypes = [ctypes.c_int, ctypes.c_double]
-                yn.argtypes = [ctypes.c_int, ctypes.c_double]
-                jn.restype = ctypes.c_double
-                yn.restype = ctypes.c_double
-                return (
-                    lambda n, x, _f=jn: float(_f(int(n), float(x))),
-                    lambda n, x, _f=yn: float(_f(int(n), float(x))),
-                )
-    return None, None
-
-
-_BESSEL_JN, _BESSEL_YN = _load_bessel_runtime()
-
-
 def _jn(n: int, x: float) -> float:
-    if _BESSEL_JN is None:
-        raise RuntimeError("No runtime Bessel backend available for exact coax cutoff solving.")
-    return _BESSEL_JN(int(n), float(x))
-
+    return float(jv(n, x))
 
 def _yn(n: int, x: float) -> float:
-    if _BESSEL_YN is None:
-        raise RuntimeError("No runtime Bessel backend available for exact coax cutoff solving.")
-    return _BESSEL_YN(int(n), float(x))
+    return float(yv(n, x))
 
 
 def _jnp(n: int, x: float) -> float:
@@ -703,8 +671,6 @@ def _bisect_root(fn, x0: float, x1: float, iters: int = 80) -> float:
 
 
 def _coax_mode_root(n: int, m: int, d_inner: float, d_outer: float, mode: str):
-    if _BESSEL_JN is None or _BESSEL_YN is None:
-        raise RuntimeError("Exact coax cutoff solving requires runtime Bessel functions (jn/yn).")
     n = int(n)
     m = int(m)
     if n < 0 or m < 1:
@@ -766,7 +732,6 @@ def coax_cutoff_te(
         return C0 * kc / (2.0 * PI * np.sqrt(float(er) * float(mur)))
     except Exception:
         return _coax_cutoff_te_approx(d_inner, d_outer, er=er, mur=mur)
-
 
 # Coax TM cutoff frequency.
 # Args: d_inner inner diameter [m], d_outer outer diameter [m], er/mur medium constants, n/m mode indices, exact exact-root flag.
@@ -2068,3 +2033,4 @@ class PCBCalculator:
         if sw <= 0.0:
             return float(np.mean(ers))
         return float(np.sum(ers * ths) / sw)
+    
