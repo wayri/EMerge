@@ -1,5 +1,5 @@
 # EMerge is an open source Python based FEM EM simulation module.
-# Copyright (C) 2025  Robert Fennis.
+# Copyright (C) 2026 Yawar (Wayri)
 
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
