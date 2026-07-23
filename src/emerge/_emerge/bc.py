@@ -28,6 +28,8 @@ from emsutil import Saveable
 
 T = TypeVar('T')
 
+class BoundaryConditionError(Exception):
+    pass
 
 def _unique(input: list[int]) -> list:
     """ Returns a sorted list of all unique integers/floats in a list."""
@@ -44,6 +46,7 @@ class BoundaryCondition(Saveable):
     _name: str = "UnnamedBC"
     _texture: str = "None"
     dim: int = -1
+    _is_exclusive: bool = True
     
     def __init__(self, assignment: GeoObject | Selection):
         
@@ -58,11 +61,14 @@ class BoundaryCondition(Saveable):
         
         self.selection: Selection = assignment
         self.tags: list[int] = self.selection.tags
-    
+        
+        
     @property
     def _size_constraint(self) -> float | None:
         return None
     
+    def valid_after_fragment(self) -> bool:
+        return self.selection._valid_after_fragment
     
     def __repr__(self) -> str:
         return f'{type(self).__name__}{self.tags}'
@@ -111,15 +117,26 @@ class BoundaryConditionSet(Saveable):
     def __init__(self):
 
         self.boundary_conditions: list[BoundaryCondition] = []
-        self._initialized: bool = False
-    
+        self._initialized_with_defaults: bool = False
+        self._overwrite: bool = True
+        
     def cleanup(self) -> None:
         """ Removes non assigned boundary conditions"""
         logger.trace("Cleaning up boundary conditions.")
         toremove = [bc for bc in self.boundary_conditions if len(bc.tags)==0]
         logger.trace(f"Removing: {toremove}")
         self.boundary_conditions = [bc for bc in self.boundary_conditions if len(bc.tags)>0]
-        
+
+    # Checks
+    def _selections_post_boolean_fragment(self) -> None:
+        """ Perform BC Validation""" 
+
+        for bc in self.boundary_conditions:
+            
+            if not bc.valid_after_fragment():
+                raise BoundaryConditionError(f'Boundary condition {bc} is based on a selection that is made before commit_geometry().')
+            logger.debug(f'   BC {bc} Ok!')
+
     def _construct_bc(self, constructor: type) -> type:
         """ A helper function to construct boundary condition objects and assign them to this set.
 
@@ -178,8 +195,19 @@ class BoundaryConditionSet(Saveable):
         """
         self.boundary_conditions = []
 
-    def assign(self, 
-               bc: BoundaryCondition) -> None:
+    def no_overwrite(self) -> BoundaryConditionSet:
+        """Turns overwrite of for the next boundary condition assignment
+
+        Returns:
+            BoundaryConditionSet: _description_
+
+        """
+
+        self._overwrite = False
+
+        return self
+
+    def assign(self, bc: BoundaryCondition) -> None:
         """Assign a boundary-condition object to a domain or list of domains.
         This method must be called to submit any boundary condition object you made to the physics.
 
@@ -189,14 +217,24 @@ class BoundaryConditionSet(Saveable):
         if bc in self.boundary_conditions:
             return
         
-        self._initialized = True
+        self._initialized_with_defaults = True
 
         bc.add_tags(bc.selection.dimtags)
 
-        for existing_bc in self.boundary_conditions:
-            excluded = existing_bc.exclude_bc(bc)
-            if excluded:
-                logger.debug(f'Removed the {excluded} tags from object with dimension {bc.dim} BC {existing_bc}')
+        if bc._is_exclusive:
+            for existing_bc in self.boundary_conditions:
+                if existing_bc.dim != bc.dim:
+                    continue
+                
+                if self._overwrite:
+                    excluded = existing_bc.exclude_bc(bc)
+                    
+                    if excluded:
+                        logger.debug(f'Removed the {excluded} tags from object with dimension {bc.dim} BC {existing_bc}')
+                else:
+                    bc.exclude_bc(existing_bc)
+        logger.trace(f'Adding {bc}')
+        self._overwrite = True
         self.boundary_conditions.append(bc)
 
 class Periodic(BoundaryCondition, Saveable):

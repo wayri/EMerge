@@ -451,6 +451,9 @@ class XYPolygon:
 
         Args:
             cs (CoordinateSystem, optional): _description_. Defaults to None.
+            origin: tuple[float, float, float]: The origin of the revolution axis
+            axis: tuple[float, float, float] | Axis: The revolution axis.
+            angle: float - The revolution angle. Defaults to 360 degrees
             angle (float, optional): _description_. Defaults to 360.0.
 
         Returns:
@@ -563,6 +566,67 @@ class XYPolygon:
         self.extend(xs, ys)
         return self
     
+    def corrugated_line(self, 
+                        direction: tuple[float, float, float] | Axis,
+                        depth: float,
+                        total_length: float,
+                        period: float,
+                        corr_axis: tuple[float, float] | Axis | None = None,
+                        side: Literal['left','right'] | None = None,
+                        duty_cycle: float = 0.5,
+                        offset: float = 0.0,) -> XYPolygon:
+        """Add a corrugating line to the polygon path
+
+        Args:
+            direction (tuple[float, float, float] | Axis): The direction of the line
+            depth (float): The depth of the corrugations
+            total_length (float): The total length of the line segment [meters]
+            period (float): The corrugation period in meters.
+            corr_axis (tuple[float, float] | Axis | None, optional): The corrugation axis direction of displacement (unit length). Defaults to None.
+            side (Literal[left, right] | None, optional): Alternative definition of the corrugation direction (left or right). Defaults to None.
+            duty_cycle (float, optional): The duty cycle percentage (defaults to 50% or 0.5). Defaults to 0.5.
+            offset (float, optional): The offset of the first corrugation in percentage of a single period. Defaults to 0.0.
+
+        Returns:
+            XYPolygon: _description_
+        """
+        ds = _parse_vector(direction)
+        if corr_axis is not None:
+            dcorr = _parse_vector(corr_axis)
+        else:
+            if side=='left':
+                dcorr = np.array([-ds[1], ds[0]])
+            else:
+                dcorr = np.array([ds[1], -ds[0]])
+        ds = ds/np.linalg.norm(ds)
+        dcorr = dcorr/np.linalg.norm(dcorr)
+        p0x = self.x[-1]
+        p0y = self.y[-1]
+        p0cx = depth*dcorr[0]
+        p0cy = depth*dcorr[1]
+        xs = []
+        ys = []
+        N = int(np.floor(total_length/period))
+        offx = 0.0
+        offy = 0.0
+        dsx = ds[0]*period
+        dsy = ds[1]*period
+        
+        dx0 = offset*dsx
+        dy0 = offset*dsy
+        tmplx = [dx0, dx0 + p0cx, dx0 + p0cx + duty_cycle*dsx, dx0 + duty_cycle*dsx]
+        tmply = [dy0, dy0 + p0cy, dy0 + p0cy + duty_cycle*dsy, dy0 + duty_cycle*dsy]
+        for n in range(N):
+            for x0, y0 in zip(tmplx, tmply):
+                xs.append(x0+p0x+offx)
+                ys.append(y0+p0y+offy)
+            offx += dsx
+            offy += dsy
+        xs.append(p0x + ds[0]*total_length)
+        ys.append(p0y + ds[1]*total_length)
+        self.extend(xs, ys)
+        return self
+        
     def connect(self, other: XYPolygon, name: str = 'Connection') -> GeoVolume:
         """Connect two XYPolygons with a defined coordinate system
 
@@ -590,6 +654,72 @@ class XYPolygon:
         vol._add_face_pointer('front',o1, self._cs.zax.np)
         vol._add_face_pointer('back', o2, other._cs.zax.np)
         return vol
+    
+    def shrink(self, distance: float) -> XYPolygon:
+        """Shrinks (inward offsets) the polygon by translating each edge inward
+        by the given distance, then recomputing vertices from adjacent edge intersections.
+
+        The polygon must have a consistent winding order. The inward direction is
+        determined from the signed area (positive area = CCW winding = inward normals
+        point left of each edge direction).
+
+        Args:
+            distance (float): The offset distance to shrink inward.
+
+        Returns:
+            XYPolygon: A new shrunk XYPolygon.
+        """
+        N = self.N
+        if N < 3:
+            raise ValueError("Need at least 3 points to shrink a polygon.")
+
+        # Signed area to determine winding direction
+        signed_area = 0.5 * (np.dot(self.x, np.roll(self.y, -1)) - np.dot(self.y, np.roll(self.x, -1)))
+        # If signed_area > 0, winding is CCW and inward normal is to the left of edge direction.
+        # If signed_area < 0, winding is CW and inward normal is to the right.
+        sign = 1.0 if signed_area > 0 else -1.0
+
+        # For each edge, compute the inward-offset line (stored as a point + direction,
+        # or equivalently two offset points).
+        # Edge i goes from vertex i to vertex (i+1) % N.
+        offset_edges = []  # Each entry: (x1, y1, x2, y2) of the offset edge
+        for i in range(N):
+            j = (i + 1) % N
+            dx = self.x[j] - self.x[i]
+            dy = self.y[j] - self.y[i]
+            length = np.sqrt(dx**2 + dy**2)
+            # Inward normal: for CCW, left normal is (-dy, dx)
+            nx = -dy / length * sign * distance
+            ny =  dx / length * sign * distance
+            offset_edges.append((
+                self.x[i] + nx, self.y[i] + ny,
+                self.x[j] + nx, self.y[j] + ny
+            ))
+
+        # Intersect consecutive offset edges to find new vertices
+        new_xs = np.empty(N)
+        new_ys = np.empty(N)
+        for i in range(N):
+            j = (i + 1) % N
+            # Line 1: offset_edges[i], Line 2: offset_edges[j]
+            x1, y1, x2, y2 = offset_edges[i]
+            x3, y3, x4, y4 = offset_edges[j]
+            # Intersect using parametric form:
+            #   P = (x1,y1) + t*(x2-x1, y2-y1)
+            #   Q = (x3,y3) + s*(x4-x3, y4-y3)
+            d1x, d1y = x2 - x1, y2 - y1
+            d2x, d2y = x4 - x3, y4 - y3
+            denom = d1x * d2y - d1y * d2x
+            if abs(denom) < 1e-15:
+                # Parallel edges — just use the shared endpoint of the offset edges
+                new_xs[j] = x2
+                new_ys[j] = y2
+            else:
+                t = ((x3 - x1) * d2y - (y3 - y1) * d2x) / denom
+                new_xs[j] = x1 + t * d1x
+                new_ys[j] = y1 + t * d1y
+
+        return XYPolygon(new_xs, new_ys, cs=self._cs, resolution=self.resolution)
             
 class Disc(GeoSurface):
     _default_name: str = 'Disc'

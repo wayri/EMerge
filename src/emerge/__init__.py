@@ -34,7 +34,7 @@ warnings.filterwarnings(
 
 import os
 
-__version__ = "2.5.4"
+__version__ = "2.8.1"
 
 NTHREADS = "1"
 os.environ.setdefault("EMERGE_STD_LOGLEVEL", "INFO")
@@ -56,6 +56,7 @@ from ._emerge.logsettings import LOG_CONTROLLER
 from loguru import logger
 
 LOG_CONTROLLER.set_default()
+logger.info(f'EMerge v{__version__}')
 logger.debug('Importing modules')
 LOG_CONTROLLER._set_log_buffer()
 
@@ -68,7 +69,7 @@ from ._emerge.coord import Line
 from ._emerge import geo
 from ._emerge.selection import Selection, FaceSelection, DomainSelection, EdgeSelection
 from ._emerge.geometry import select
-from ._emerge.mth.common_functions import norm, coax_rout, coax_rin, dot, cross
+from ._emerge.mth.common_functions import norm, coax_rout, coax_rin, dot, cross, lumped_element_material
 from ._emerge.periodic import RectCell, HexCell
 from ._emerge.mesher import Algorithm2D, Algorithm3D
 from ._emerge.howto import _HowtoClass
@@ -82,9 +83,9 @@ import emsutil.plot as plot
 from emsutil import EMergeTheme
 from emsutil import themes
 from emsutil.lib import C0, MU0, EPS0, Z0
-howto = _HowtoClass()
+from ._emerge.elements.dofsets import ElementSpace, DoFSet
 
-logger.debug('Importing complete!')
+howto = _HowtoClass()
 
 from ._emerge.install_check import run_installation_checks
 

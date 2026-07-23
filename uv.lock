@@ -473,7 +473,7 @@ wheels = [
 
 [[package]]
 name = "emerge"
-version = "2.5.4"
+version = "2.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "emsutil" },
@@ -515,7 +515,7 @@ umfpack = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "emerge-iron" },
+    { name = "emerge-aasds" },
     { name = "pytest" },
     { name = "scikit-umfpack" },
     { name = "twine" },
@@ -525,7 +525,7 @@ dev = [
 requires-dist = [
     { name = "cupy-cuda12x", marker = "extra == 'cudss'" },
     { name = "cupy-cuda12x", marker = "extra == 'cudss12'" },
-    { name = "emsutil", specifier = ">=0.6.0,<0.7.0" },
+    { name = "emsutil", specifier = ">=0.8.3,<0.9.0" },
     { name = "ezdxf", marker = "extra == 'dxf'" },
     { name = "gmsh", specifier = ">=4.13.0,<4.15" },
     { name = "joblib", specifier = ">=1.5.1" },
@@ -550,20 +550,25 @@ provides-extras = ["umfpack", "cudss", "cudss12", "dxf", "gerber"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "emerge-iron", git = "https://github.com/FennisRobert/EMerge-IRON" },
+    { name = "emerge-aasds", git = "https://github.com/FennisRobert/emerge-aasds" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "scikit-umfpack", specifier = ">=0.4.2" },
     { name = "twine", specifier = ">=6.2.0" },
 ]
 
 [[package]]
-name = "emerge-iron"
-version = "0.1.0"
-source = { git = "https://github.com/FennisRobert/EMerge-IRON#621cd312d65bd4f704b6c24682aa6f1ab07b6833" }
+name = "emerge-aasds"
+version = "0.3.0"
+source = { git = "https://github.com/FennisRobert/emerge-aasds#8c750443ac63daed4ab0306a0ab3caaabb2b0e2e" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
 
 [[package]]
 name = "emsutil"
-version = "0.6.0"
+version = "0.8.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "loguru" },
@@ -575,9 +580,9 @@ dependencies = [
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b5/ae/1abdb284e8aa96b7168c457bf5d7b4a9ce5267d3bdd62119989392d92cfc/emsutil-0.6.0.tar.gz", hash = "sha256:8a1cd5263076f15f85052cb07bdc22827a3aef8ce856abee860d5afc4859f8df", size = 7831409, upload-time = "2026-04-08T14:20:09.439Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8c/57/acff33e205ac9644e2dcb6371d8410752887f142397091aab93b7d8d881c/emsutil-0.8.3.tar.gz", hash = "sha256:48f0f1033eb761748ba51718948170090b4c19c9e55556a5881b10b6afecee1b", size = 7839613, upload-time = "2026-06-30T10:57:57.115Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/e1/9b258e6f0392dc5a52769f0ab6def9578ae6762a0d454473912c65742196/emsutil-0.6.0-py3-none-any.whl", hash = "sha256:3883fc50e203bef494f7c25ae6eb1658f4b13d14388dc60a76d39996eba137c2", size = 7740236, upload-time = "2026-04-08T14:20:07.744Z" },
+    { url = "https://files.pythonhosted.org/packages/22/7d/243faa0758d262888b029743cb07145c21e236581ef411ed4ba81a4d04a4/emsutil-0.8.3-py3-none-any.whl", hash = "sha256:cfaafb9650f8f49a0c4d0351eb7a92577d72015e5e0ad230005ba7e4d0e6a4af", size = 7748255, upload-time = "2026-06-30T10:57:55.276Z" },
 ]
 
 [[package]]
