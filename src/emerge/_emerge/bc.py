@@ -75,6 +75,9 @@ class BoundaryCondition(Saveable):
 
     def __str__(self) -> str:
         return self.__repr__()
+
+    def details(self) -> str:
+        return ''
     
     def add_tags(self, dimtags: list[tuple[int,int]]) -> None:
         """Adds the given taggs to this boundary condition.
@@ -195,7 +198,7 @@ class BoundaryConditionSet(Saveable):
         """
         self.boundary_conditions = []
 
-    def no_overwrite(self) -> BoundaryConditionSet:
+    def no_overwrite(self: T) -> T:
         """Turns overwrite of for the next boundary condition assignment
 
         Returns:

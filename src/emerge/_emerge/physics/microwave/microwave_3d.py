@@ -402,7 +402,7 @@ class Microwave3D:
         else:
             for bc in self.bc.oftype(ModalPort):
                 bc.reset()
-            
+
         self.basis: FEMBasis = None
         self.solveroutine.reset()
         self.assembler.cached_matrices = None
@@ -593,7 +593,7 @@ class Microwave3D:
         if self.mesher.periodic_cell is not None:
             self.mesher.periodic_cell.generate_bcs()
             for bc in self.mesher.periodic_cell.bcs:
-                self.bc.no_overwrite().assign(bc)
+                self.bc.assign(bc)
 
         # Assign SurfaceImpedance to all conducting volume_boundaries
         material_map = defaultdict(set)
@@ -607,11 +607,11 @@ class Microwave3D:
             if (geometry.material.cond.value > self.assembler.settings.mw_3d_surfimplim):
                 logger.info(f"Assigning ThinConductor BC to {geometry}")
                 tags_ext = [tag for tag in geometry.tags if tag in external_tags]
+                tags_int = [tag for tag in geometry.tags if tag not in external_tags]
                 if len(tags_ext) > 0:
                     self.bc.no_overwrite().SurfaceImpedance(
                         FaceSelection(tags_ext), geometry.material
                     )
-                tags_int = [tag for tag in geometry.tags if tag not in external_tags]
                 if len(tags_int) > 0:
                     self.bc.no_overwrite().ThinConductor(
                         FaceSelection(tags_int), geometry.material
@@ -626,6 +626,7 @@ class Microwave3D:
             self.bc.no_overwrite().SurfaceImpedance(FaceSelection(list(assignment)), material=material)
 
         self._bc_initialized = True
+
     def _initialize_bc_data(self):
         """Initializes auxilliary required boundary condition information before running simulations."""
         logger.debug("Initializing boundary conditions")
@@ -660,7 +661,6 @@ class Microwave3D:
         """
         self.bc._is_excited()
         self.bc._check_ports()
-
         # Check if lumped ports are inside the domain
         exterior_tags = set(self.mesher.domain_boundary_face_tags)
         for lumped_port in self.bc.oftype(LumpedPort):
@@ -2373,6 +2373,7 @@ class Microwave3D:
                     )
 
                     Sij = bi * np.abs(port_mode_powers[smat_index_j])
+                    logger.debug(f"S[{smat_index_i},{smat_index_j}] = {20*np.log10(np.abs(Sij)):.2f}dB")
                     scalardata.write_S(smat_index_i, smat_index_j, Sij)
                     if abs(Sij) > 1.0:
                         logger.debug(
