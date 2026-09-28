@@ -1650,7 +1650,7 @@ class _MicrostripAPI:
             dielectric, t thickness [unit].
 
         Returns:
-            Single-ended impedance in ohms; PCBCalculator.z0 instead returns inverse width in stackup units.
+            Single-ended impedance in ohms.
         """
         h = self._pcb.layer_distance(layer, ground_layer)
         ee = self._pcb.effective_er(layer, ground_layer, f0, er=er)
@@ -1780,7 +1780,7 @@ class _StriplineAPI:
             dielectric, t thickness [unit].
 
         Returns:
-            Single-ended impedance in ohms; PCBCalculator.z0 instead returns inverse width in stackup units.
+            Single-ended impedance in ohms.
         """
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
@@ -2088,7 +2088,7 @@ class _CPWAPI:
             [Hz], er override dielectric, t thickness [unit].
 
         Returns:
-            Single-ended impedance in ohms; PCBCalculator.z0 instead returns inverse width in stackup units.
+            Single-ended impedance in ohms.
         """
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
@@ -2464,7 +2464,7 @@ class _CoaxAPI:
             d_inner/d_outer diameters [unit], er relative permittivity.
 
         Returns:
-            Single-ended impedance in ohms; PCBCalculator.z0 instead returns inverse width in stackup units.
+            Single-ended impedance in ohms.
         """
         return float(coax_z0(d_inner * self._pcb.unit, d_outer * self._pcb.unit, er))
 
@@ -2541,7 +2541,7 @@ class _CoaxAPI:
             flag.
 
         Returns:
-            Dictionary of higher-mode cutoff frequencies in hertz.
+            (TE11 cutoff, TM01 cutoff) in hertz.
         """
         di = d_inner * self._pcb.unit
         do = d_outer * self._pcb.unit
@@ -2600,7 +2600,7 @@ class _TwistedPairAPI:
             terms, twists_per_len turns per unit length, ptfe branch flag.
 
         Returns:
-            Single-ended impedance in ohms; PCBCalculator.z0 instead returns inverse width in stackup units.
+            Single-ended impedance in ohms.
         """
         return float(
             twisted_pair_z0(
@@ -2803,7 +2803,7 @@ class _RectangularWaveguideAPI:
             fc cutoff frequency [Hz], er/mur medium constants, m mode index.
 
         Returns:
-            Geometry in stackup units for inverse solves; otherwise the named physical quantity.
+            Broad-wall dimension in stackup units.
         """
         return float(rectwg_a_for_fc(fc, er=er, mur=mur, m=m) / self._pcb.unit)
 
@@ -2814,7 +2814,7 @@ class _RectangularWaveguideAPI:
             z0 target TE impedance, f frequency [Hz], er/mur medium constants.
 
         Returns:
-            Geometry in stackup units for inverse solves; otherwise the named physical quantity.
+            Broad-wall dimension in stackup units.
         """
         return float(rectwg_te10_a_for_z0(z0, f, er=er, mur=mur) / self._pcb.unit)
 
