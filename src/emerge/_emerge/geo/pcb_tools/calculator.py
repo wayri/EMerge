@@ -15,63 +15,13 @@
 # along with this program; if not, see
 # <https://www.gnu.org/licenses/>.
 
-# Implemented functions in this module (index):
-#
-# Internal numeric helpers:
-# - _asf, _ellipk_agm, _ellip_ratio, _coth, _sech
-# - _load_bessel_runtime, _jn, _yn, _jnp, _ynp
-# - _material_er
-# - _inverse_from_samples, _scan_inverse
-# - _odd_even_from_k
-# - _cpw_cap_per_len
-# - _coax_cutoff_te_approx, _coax_cutoff_tm_approx
-# - _coax_mode_char, _bisect_root, _coax_mode_root
-#
-# Core transmission-line / waveguide formulas:
-# - microstrip_z0
-# - microstrip_eeff
-# - microstrip_eeff_dispersion
-# - microstrip_z0_dispersion
-# - stripline_z0
-# - coupled_stripline_zodd
-# - coupled_stripline_zdiff
-# - broadside_stripline_zdiff_zcm
-# - cpw_z0
-# - cpw_eeff
-# - cpw_eeff_dispersion
-# - cpw_z0_dispersion
-# - coax_z0
-# - coax_d_for_z0
-# - coax_cutoff_te
-# - coax_cutoff_tm
-# - twisted_pair_eeff
-# - twisted_pair_z0
-# - twisted_pair_d_center_for_z0
-# - twisted_pair_d_wire_for_z0
-# - rectwg_fc
-# - rectwg_beta
-# - rectwg_z_te
-# - rectwg_z_tm
-# - rectwg_lambda_g
-# - rectwg_a_for_fc
-# - rectwg_te10_a_for_z0
-# - coupled_microstrip_z0_even_odd
-# - differential_cpw_zdiff_zcm (unsupported: raises NotImplementedError)
-#
-# Public API namespaces/methods:
-# - _MicrostripAPI: z0, eeff, w_for_z0, quarter_wave
-# - _StriplineAPI: z0, w_for_z0
-# - _EdgeCoupledStriplineAPI: zodd, zdiff, w_for_zdiff, s_for_zdiff
-# - _BroadsideCoupledStriplineAPI: zdiff_zcm, w_for_zdiff, g_for_zdiff
-# - _CPWAPI: z0, eeff, w_for_z0
-# - _EdgeCoupledMicrostripAPI: even_odd, zdiff_zcm, w_for_zdiff, s_for_zdiff
-# - _DifferentialCPWAPI: zdiff_zcm, w_for_zdiff, s_for_zdiff
-# - _CoaxAPI: z0, d_inner_for_z0, cutoff_te, cutoff_tm, cutoffs
-# - _TwistedPairAPI: eeff, z0, d_center_for_z0, d_wire_for_z0
-# - _RectangularWaveguideAPI: fc, beta, lambda_g, z_te, z_tm, a_for_fc,
-#   a_for_z_te10, length_for_angle, te10
-# - PCBCalculator: __init__, z0, layer_index, z, layer_distance, effective_er
-#
+"""PCB transmission-line, cable, and waveguide calculations.
+
+Core functions use metres, hertz, and ohms. ``PCBCalculator`` converts its
+configured stackup unit to metres. Closed-form and empirical estimates
+assume the cross sections described by their individual functions.
+"""
+
 import numpy as np
 from scipy.special import ellipk, ellipkm1, jv, yv
 from emsutil import Material
@@ -81,6 +31,11 @@ PI = np.pi
 TAU = 2 * PI
 C0 = 299_792_458.0
 MU0 = 4e-7 * PI
+
+
+############################################################
+#                     NUMERIC HELPERS                      #
+############################################################
 
 
 def _asf(x):
@@ -273,19 +228,25 @@ def _odd_even_from_k(z0, k):
     return ze, zo
 
 
+############################################################
+#                        MICROSTRIP                        #
+############################################################
+
+
 def microstrip_z0(W: float, th: float, er: float, t: float = 0.0):
     """Single-ended quasi-static microstrip impedance in ohms.
 
+    Piecewise Hammerstad-style air impedance divided by sqrt(epsilon_eff); finite
+    t changes electrical width.
+
     Args:
-        W trace width [m], th substrate height [m], er relative permittivity, t
-        conductor thickness [m].
+        W (float): Conductor width in metres.
+        th (float): Substrate height in metres.
+        er (float): Relative permittivity.
+        t (float): Conductor thickness in metres.
 
     Returns:
         Single-ended quasi-static microstrip impedance in ohms.
-
-    Model:
-        Piecewise Hammerstad-style air impedance divided by sqrt(epsilon_eff); finite
-        t changes electrical width.
     """
     W = _asf(W)
     h = float(th)
@@ -310,16 +271,17 @@ def microstrip_z0(W: float, th: float, er: float, t: float = 0.0):
 def microstrip_eeff(W: float, th: float, er: float, t: float = 0.0):
     """Quasi-static microstrip effective relative permittivity.
 
+    Air/dielectric filling approximation with a narrow-line term and finite-
+    thickness width correction.
+
     Args:
-        W trace width [m], th substrate height [m], er relative permittivity, t
-        conductor thickness [m].
+        W (float): Conductor width in metres.
+        th (float): Substrate height in metres.
+        er (float): Relative permittivity.
+        t (float): Conductor thickness in metres.
 
     Returns:
         Quasi-static microstrip effective relative permittivity.
-
-    Model:
-        Air/dielectric filling approximation with a narrow-line term and finite-
-        thickness width correction.
     """
     W = _asf(W)
     h = float(th)
@@ -348,15 +310,17 @@ def microstrip_eeff_dispersion(
 ):
     """Frequency-dependent microstrip effective relative permittivity.
 
+    Kirschning/Jansen empirical interpolation: er - (er - eeff(0))/(1 + P).
+
     Args:
-        W trace width [m], th substrate height [m], er relative permittivity, f
-        frequency [Hz], t thickness [m].
+        W (float): Conductor width in metres.
+        th (float): Substrate height in metres.
+        er (float): Relative permittivity.
+        f (float): Frequency in hertz.
+        t (float): Conductor thickness in metres.
 
     Returns:
         Frequency-dependent microstrip effective relative permittivity.
-
-    Model:
-        Kirschning/Jansen empirical interpolation: er - (er - eeff(0))/(1 + P).
     """
     W = _asf(W)
     h = float(th)
@@ -382,16 +346,18 @@ def microstrip_eeff_dispersion(
 def microstrip_z0_dispersion(W: float, th: float, er: float, f: float, t: float = 0.0):
     """Frequency-dependent microstrip impedance in ohms.
 
+    Kirschning/Jansen correction: Z0(f) = Z0(0)*(R13/R14)**R17 within the checked
+    range.
+
     Args:
-        W trace width [m], th substrate height [m], er relative permittivity, f
-        frequency [Hz], t thickness [m].
+        W (float): Conductor width in metres.
+        th (float): Substrate height in metres.
+        er (float): Relative permittivity.
+        f (float): Frequency in hertz.
+        t (float): Conductor thickness in metres.
 
     Returns:
         Frequency-dependent microstrip impedance in ohms.
-
-    Model:
-        Kirschning/Jansen correction: Z0(f) = Z0(0)*(R13/R14)**R17 within the checked
-        range.
     """
     W = _asf(W)
     h = float(th)
@@ -446,19 +412,25 @@ def microstrip_z0_dispersion(W: float, th: float, er: float, f: float, t: float 
     return z0_0 * d
 
 
+############################################################
+#                         STRIPLINE                        #
+############################################################
+
+
 def stripline_z0(W: float, b: float, er: float, t: float = 0.0):
     """Centered, homogeneous stripline impedance in ohms.
 
+    Zero-thickness Cohn elliptic-integral form; positive thickness uses the
+    finite-t logarithmic approximation.
+
     Args:
-        W strip width [m], b ground-to-ground spacing [m], er relative permittivity, t
-        conductor thickness [m].
+        W (float): Conductor width in metres.
+        b (float): Reference-plane spacing in metres.
+        er (float): Relative permittivity.
+        t (float): Conductor thickness in metres.
 
     Returns:
         Centered, homogeneous stripline impedance in ohms.
-
-    Model:
-        Zero-thickness Cohn elliptic-integral form; positive thickness uses the
-        finite-t logarithmic approximation.
     """
     W = _asf(W)
     b = float(b)
@@ -485,15 +457,16 @@ def stripline_z0(W: float, b: float, er: float, t: float = 0.0):
 def coupled_stripline_zodd(W: float, S: float, b: float, er: float):
     """Odd-mode impedance of zero-thickness edge-coupled stripline in ohms.
 
+    Cohn conformal-map modulus k from W, S, b, then eta0*K(k)/(4*sqrt(er)*K(k')).
+
     Args:
-        W width [m], S edge spacing [m], b cavity height [m], er relative
-        permittivity.
+        W (float): Conductor width in metres.
+        S (float): Edge gap or coplanar slot in metres.
+        b (float): Reference-plane spacing in metres.
+        er (float): Relative permittivity.
 
     Returns:
         Odd-mode impedance of zero-thickness edge-coupled stripline in ohms.
-
-    Model:
-        Cohn conformal-map modulus k from W, S, b, then eta0*K(k)/(4*sqrt(er)*K(k')).
     """
     W = _asf(W)
     b = float(b)
@@ -509,15 +482,16 @@ def coupled_stripline_zodd(W: float, S: float, b: float, er: float):
 def coupled_stripline_zdiff(W: float, S: float, b: float, er: float):
     """Differential edge-coupled stripline impedance in ohms.
 
+    Equal and opposite excitation gives Zdiff = 2*Zodd.
+
     Args:
-        W width [m], S edge spacing [m], b cavity height [m], er relative
-        permittivity.
+        W (float): Conductor width in metres.
+        S (float): Edge gap or coplanar slot in metres.
+        b (float): Reference-plane spacing in metres.
+        er (float): Relative permittivity.
 
     Returns:
         Differential edge-coupled stripline impedance in ohms.
-
-    Model:
-        Equal and opposite excitation gives Zdiff = 2*Zodd.
     """
     return 2.0 * coupled_stripline_zodd(W, S, b, er)
 
@@ -531,16 +505,17 @@ def broadside_stripline_zdiff_zcm(W: float, G: float, b: float, er: float):
     #   R = sqrt((k - s) / (1/k - s))
     """Return (differential, common-mode) broadside stripline impedances in ohms.
 
+    Solve Cohn's implicit width/modulus equation, then use Zdiff=2*Zodd and
+    Zcm=Zeven/2.
+
     Args:
-        W strip width [m], G broadside gap [m], b cavity height [m], er relative
-        permittivity.
+        W (float): Conductor width in metres.
+        G (float): Broadside spacing in metres.
+        b (float): Reference-plane spacing in metres.
+        er (float): Relative permittivity.
 
     Returns:
         Return (differential, common-mode) broadside stripline impedances in ohms.
-
-    Model:
-        Solve Cohn's implicit width/modulus equation, then use Zdiff=2*Zodd and
-        Zcm=Zeven/2.
     """
     ws = _asf(W)
     g = float(G)
@@ -598,6 +573,11 @@ def broadside_stripline_zdiff_zcm(W: float, G: float, b: float, er: float):
     return out_zd, out_zc
 
 
+############################################################
+#                    COPLANAR WAVEGUIDE                    #
+############################################################
+
+
 def cpw_z0(
     W: float,
     S: float,
@@ -608,16 +588,19 @@ def cpw_z0(
 ):
     """Single-ended CPW or grounded-CPW impedance in ohms.
 
+    Conformal-map elliptic ratios give air/dielectric filling; optional t applies
+    the first-order slot correction.
+
     Args:
-        W center width [m], S slot [m], th substrate height [m], er relative
-        permittivity, t thickness [m], has_metal_backside model flag.
+        W (float): Conductor width in metres.
+        S (float): Edge gap or coplanar slot in metres.
+        th (float): Substrate height in metres.
+        er (float): Relative permittivity.
+        t (float): Conductor thickness in metres.
+        has_metal_backside (bool): Include an ideal continuous backside ground plane.
 
     Returns:
         Single-ended CPW or grounded-CPW impedance in ohms.
-
-    Model:
-        Conformal-map elliptic ratios give air/dielectric filling; optional t applies
-        the first-order slot correction.
     """
     W = _asf(W)
     h = float(th)
@@ -668,15 +651,18 @@ def cpw_eeff(
 ):
     """Effective relative permittivity of CPW or grounded CPW.
 
+    Partial capacitance filling factor from conformal-map elliptic ratios.
+
     Args:
-        W center width [m], S slot [m], th substrate height [m], er relative
-        permittivity, t thickness [m], has_metal_backside model flag.
+        W (float): Conductor width in metres.
+        S (float): Edge gap or coplanar slot in metres.
+        th (float): Substrate height in metres.
+        er (float): Relative permittivity.
+        t (float): Conductor thickness in metres.
+        has_metal_backside (bool): Include an ideal continuous backside ground plane.
 
     Returns:
         Effective relative permittivity of CPW or grounded CPW.
-
-    Model:
-        Partial capacitance filling factor from conformal-map elliptic ratios.
     """
     W = _asf(W)
     h = float(th)
@@ -712,16 +698,19 @@ def cpw_eeff_dispersion(
 ):
     """Frequency-dependent CPW or grounded-CPW effective permittivity.
 
+    Empirical Qucs interpolation in sqrt(epsilon_eff) toward sqrt(er).
+
     Args:
-        W center width [m], S slot [m], th substrate height [m], er relative
-        permittivity, f frequency [Hz], t thickness [m], has_metal_backside model
-        flag.
+        W (float): Conductor width in metres.
+        S (float): Edge gap or coplanar slot in metres.
+        th (float): Substrate height in metres.
+        er (float): Relative permittivity.
+        f (float): Frequency in hertz.
+        t (float): Conductor thickness in metres.
+        has_metal_backside (bool): Include an ideal continuous backside ground plane.
 
     Returns:
         Frequency-dependent CPW or grounded-CPW effective permittivity.
-
-    Model:
-        Empirical Qucs interpolation in sqrt(epsilon_eff) toward sqrt(er).
     """
     ee0 = _asf(cpw_eeff(W, S, th, er, t=t, has_metal_backside=has_metal_backside))
     f = float(f)
@@ -755,16 +744,19 @@ def cpw_z0_dispersion(
 ):
     """Frequency-dependent CPW or grounded-CPW impedance in ohms.
 
+    Scale quasi-static Z0 by sqrt(epsilon_eff(0)/epsilon_eff(f)).
+
     Args:
-        W center width [m], S slot [m], th substrate height [m], er relative
-        permittivity, f frequency [Hz], t thickness [m], has_metal_backside model
-        flag.
+        W (float): Conductor width in metres.
+        S (float): Edge gap or coplanar slot in metres.
+        th (float): Substrate height in metres.
+        er (float): Relative permittivity.
+        f (float): Frequency in hertz.
+        t (float): Conductor thickness in metres.
+        has_metal_backside (bool): Include an ideal continuous backside ground plane.
 
     Returns:
         Frequency-dependent CPW or grounded-CPW impedance in ohms.
-
-    Model:
-        Scale quasi-static Z0 by sqrt(epsilon_eff(0)/epsilon_eff(f)).
     """
     z0_qs = _asf(cpw_z0(W, S, th, er, t=t, has_metal_backside=has_metal_backside))
     ee0 = _asf(cpw_eeff(W, S, th, er, t=t, has_metal_backside=has_metal_backside))
@@ -811,18 +803,23 @@ def _cpw_cap_per_len(
     return c, c_air, z
 
 
+############################################################
+#                      COAXIAL LINES                       #
+############################################################
+
+
 def coax_z0(d_inner: float, d_outer: float, er: float):
     """TEM coaxial-line impedance in ohms.
 
+    eta0*ln(d_outer/d_inner)/(2*pi*sqrt(er)).
+
     Args:
-        d_inner inner conductor diameter [m], d_outer outer conductor diameter [m], er
-        relative permittivity.
+        d_inner (float): Inner conductor diameter in metres.
+        d_outer (float): Outer conductor diameter in metres.
+        er (float): Relative permittivity.
 
     Returns:
         TEM coaxial-line impedance in ohms.
-
-    Model:
-        eta0*ln(d_outer/d_inner)/(2*pi*sqrt(er)).
     """
     d_inner = _asf(d_inner)
     d_outer = _asf(d_outer)
@@ -832,15 +829,15 @@ def coax_z0(d_inner: float, d_outer: float, er: float):
 def coax_d_for_z0(Z0: float, d_outer: float, er: float):
     """Inner coax diameter in metres for a target TEM impedance.
 
+    Algebraic inverse of the logarithmic coax formula.
+
     Args:
-        Z0 target impedance [Ohm], d_outer outer diameter [m], er relative
-        permittivity.
+        Z0 (float): Target impedance in ohms.
+        d_outer (float): Outer conductor diameter in metres.
+        er (float): Relative permittivity.
 
     Returns:
         Inner coax diameter in metres for a target TEM impedance.
-
-    Model:
-        Algebraic inverse of the logarithmic coax formula.
     """
     return float(d_outer) / np.exp(2.0 * PI * np.sqrt(er) * float(Z0) / n0)
 
@@ -956,15 +953,19 @@ def coax_cutoff_te(
 ):
     """TE_nm coaxial higher-mode cutoff frequency in hertz.
 
+    Solve the annular Bessel-derivative eigenvalue equation when available.
+
     Args:
-        d_inner inner diameter [m], d_outer outer diameter [m], er/mur medium
-        constants, n/m mode indices, exact exact-root flag.
+        d_inner (float): Inner conductor diameter in metres.
+        d_outer (float): Outer conductor diameter in metres.
+        er (float): Relative permittivity.
+        mur (float): Relative permeability.
+        n (int): Mode order or index.
+        m (int): Mode order or index.
+        exact (bool): Solve the modal eigenvalue rather than using the cutoff estimate.
 
     Returns:
         TE_nm coaxial higher-mode cutoff frequency in hertz.
-
-    Model:
-        Solve the annular Bessel-derivative eigenvalue equation when available.
     """
     if not exact:
         return _coax_cutoff_te_approx(d_inner, d_outer, er=er, mur=mur)
@@ -986,15 +987,19 @@ def coax_cutoff_tm(
 ):
     """TM_nm coaxial higher-mode cutoff frequency in hertz.
 
+    Solve the annular Bessel-function eigenvalue equation when available.
+
     Args:
-        d_inner inner diameter [m], d_outer outer diameter [m], er/mur medium
-        constants, n/m mode indices, exact exact-root flag.
+        d_inner (float): Inner conductor diameter in metres.
+        d_outer (float): Outer conductor diameter in metres.
+        er (float): Relative permittivity.
+        mur (float): Relative permeability.
+        n (int): Mode order or index.
+        m (int): Mode order or index.
+        exact (bool): Solve the modal eigenvalue rather than using the cutoff estimate.
 
     Returns:
         TM_nm coaxial higher-mode cutoff frequency in hertz.
-
-    Model:
-        Solve the annular Bessel-function eigenvalue equation when available.
     """
     if not exact:
         return _coax_cutoff_tm_approx(d_inner, d_outer, er=er, mur=mur)
@@ -1003,6 +1008,11 @@ def coax_cutoff_tm(
         return C0 * kc / (2.0 * PI * np.sqrt(float(er) * float(mur)))
     except Exception:
         return _coax_cutoff_tm_approx(d_inner, d_outer, er=er, mur=mur)
+
+
+############################################################
+#                       TWISTED PAIR                       #
+############################################################
 
 
 def twisted_pair_eeff(
@@ -1015,15 +1025,18 @@ def twisted_pair_eeff(
 ):
     """Effective relative permittivity for the empirical twisted-pair model.
 
+    Blend inner and surrounding dielectric with a twist-dependent filling factor.
+
     Args:
-        d_center center spacing [m], d_wire wire diameter [m], er bulk dielectric, er1
-        reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
+        d_center (float): Wire centre-to-centre spacing in metres.
+        d_wire (float): Wire conductor diameter in metres.
+        er (float): Relative permittivity.
+        er1 (float): Relative permittivity of the surrounding medium.
+        twists_per_len (float): Twists per metre.
+        ptfe (bool): Use the PTFE branch of the empirical dielectric model.
 
     Returns:
         Effective relative permittivity for the empirical twisted-pair model.
-
-    Model:
-        Blend inner and surrounding dielectric with a twist-dependent filling factor.
     """
     d_center = float(d_center)
     d_wire = float(d_wire)
@@ -1044,15 +1057,18 @@ def twisted_pair_z0(
 ):
     """Quasi-static twisted-pair impedance in ohms.
 
+    eta0*acosh(d_center/d_wire)/(pi*sqrt(epsilon_eff)).
+
     Args:
-        d_center center spacing [m], d_wire wire diameter [m], er bulk dielectric, er1
-        reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
+        d_center (float): Wire centre-to-centre spacing in metres.
+        d_wire (float): Wire conductor diameter in metres.
+        er (float): Relative permittivity.
+        er1 (float): Relative permittivity of the surrounding medium.
+        twists_per_len (float): Twists per metre.
+        ptfe (bool): Use the PTFE branch of the empirical dielectric model.
 
     Returns:
         Quasi-static twisted-pair impedance in ohms.
-
-    Model:
-        eta0*acosh(d_center/d_wire)/(pi*sqrt(epsilon_eff)).
     """
     eeff = twisted_pair_eeff(
         d_center, d_wire, er, er1=er1, twists_per_len=twists_per_len, ptfe=ptfe
@@ -1071,15 +1087,18 @@ def twisted_pair_d_center_for_z0(
 ):
     """Centre spacing in metres for target twisted-pair impedance.
 
+    Numerical inverse of the twist-dependent impedance relation.
+
     Args:
-        z0 target impedance [Ohm], d_wire wire diameter [m], er bulk dielectric, er1
-        reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
+        z0 (float): Target impedance in ohms.
+        d_wire (float): Wire conductor diameter in metres.
+        er (float): Relative permittivity.
+        er1 (float): Relative permittivity of the surrounding medium.
+        twists_per_len (float): Twists per metre.
+        ptfe (bool): Use the PTFE branch of the empirical dielectric model.
 
     Returns:
         Centre spacing in metres for target twisted-pair impedance.
-
-    Model:
-        Numerical inverse of the twist-dependent impedance relation.
     """
     eeff = twisted_pair_eeff(
         d_center=max(2.0 * float(d_wire), float(d_wire) + 1e-12),
@@ -1103,15 +1122,18 @@ def twisted_pair_d_wire_for_z0(
 ):
     """Wire diameter in metres for target twisted-pair impedance.
 
+    Numerical inverse of the twist-dependent impedance relation.
+
     Args:
-        z0 target impedance [Ohm], d_center center spacing [m], er bulk dielectric,
-        er1 reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
+        z0 (float): Target impedance in ohms.
+        d_center (float): Wire centre-to-centre spacing in metres.
+        er (float): Relative permittivity.
+        er1 (float): Relative permittivity of the surrounding medium.
+        twists_per_len (float): Twists per metre.
+        ptfe (bool): Use the PTFE branch of the empirical dielectric model.
 
     Returns:
         Wire diameter in metres for target twisted-pair impedance.
-
-    Model:
-        Numerical inverse of the twist-dependent impedance relation.
     """
     eeff = twisted_pair_eeff(
         d_center=d_center,
@@ -1129,20 +1151,28 @@ def twisted_pair_d_wire_for_z0(
     return float(float(d_center) / k)
 
 
+############################################################
+#                   RECTANGULAR WAVEGUIDE                  #
+############################################################
+
+
 def rectwg_fc(
     a: float, b: float, m: int = 1, n: int = 0, er: float = 1.0, mur: float = 1.0
 ):
     """Rectangular-waveguide mode cutoff frequency in hertz.
 
+    c0*sqrt((m/a)**2+(n/b)**2)/(2*sqrt(er*mur)).
+
     Args:
-        a broad wall [m], b narrow wall [m], m/n mode indices, er/mur medium
-        constants.
+        a (float): Broad waveguide wall in metres.
+        b (float): Narrow waveguide wall in metres.
+        m (int): Mode order or index.
+        n (int): Mode order or index.
+        er (float): Relative permittivity.
+        mur (float): Relative permeability.
 
     Returns:
         Rectangular-waveguide mode cutoff frequency in hertz.
-
-    Model:
-        c0*sqrt((m/a)**2+(n/b)**2)/(2*sqrt(er*mur)).
     """
     a = float(a)
     b = float(b)
@@ -1165,15 +1195,19 @@ def rectwg_beta(
 ):
     """Propagation constant beta in radians per metre above cutoff.
 
+    beta = sqrt(k**2-kc**2); the implementation returns zero at/below cutoff.
+
     Args:
-        f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium
-        constants.
+        f (float): Frequency in hertz.
+        a (float): Broad waveguide wall in metres.
+        b (float): Narrow waveguide wall in metres.
+        m (int): Mode order or index.
+        n (int): Mode order or index.
+        er (float): Relative permittivity.
+        mur (float): Relative permeability.
 
     Returns:
         Propagation constant beta in radians per metre above cutoff.
-
-    Model:
-        beta = sqrt(k**2-kc**2); the implementation returns zero at/below cutoff.
     """
     f = float(f)
     if f <= 0.0:
@@ -1197,15 +1231,19 @@ def rectwg_z_te(
 ):
     """TE-mode wave impedance in ohms.
 
+    eta/sqrt(1-(fc/f)**2); infinite at/below cutoff.
+
     Args:
-        f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium
-        constants.
+        f (float): Frequency in hertz.
+        a (float): Broad waveguide wall in metres.
+        b (float): Narrow waveguide wall in metres.
+        m (int): Mode order or index.
+        n (int): Mode order or index.
+        er (float): Relative permittivity.
+        mur (float): Relative permeability.
 
     Returns:
         TE-mode wave impedance in ohms.
-
-    Model:
-        eta/sqrt(1-(fc/f)**2); infinite at/below cutoff.
     """
     f = float(f)
     fc = rectwg_fc(a, b, m=m, n=n, er=er, mur=mur)
@@ -1225,15 +1263,19 @@ def rectwg_z_tm(
 ):
     """TM-mode wave impedance in ohms.
 
+    eta*sqrt(1-(fc/f)**2); zero at/below cutoff.
+
     Args:
-        f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium
-        constants.
+        f (float): Frequency in hertz.
+        a (float): Broad waveguide wall in metres.
+        b (float): Narrow waveguide wall in metres.
+        m (int): Mode order or index.
+        n (int): Mode order or index.
+        er (float): Relative permittivity.
+        mur (float): Relative permeability.
 
     Returns:
         TM-mode wave impedance in ohms.
-
-    Model:
-        eta*sqrt(1-(fc/f)**2); zero at/below cutoff.
     """
     f = float(f)
     fc = rectwg_fc(a, b, m=m, n=n, er=er, mur=mur)
@@ -1253,15 +1295,19 @@ def rectwg_lambda_g(
 ):
     """Guided wavelength in metres above cutoff.
 
+    2*pi/beta; infinite at/below cutoff.
+
     Args:
-        f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium
-        constants.
+        f (float): Frequency in hertz.
+        a (float): Broad waveguide wall in metres.
+        b (float): Narrow waveguide wall in metres.
+        m (int): Mode order or index.
+        n (int): Mode order or index.
+        er (float): Relative permittivity.
+        mur (float): Relative permeability.
 
     Returns:
         Guided wavelength in metres above cutoff.
-
-    Model:
-        2*pi/beta; infinite at/below cutoff.
     """
     beta = rectwg_beta(f, a, b, m=m, n=n, er=er, mur=mur)
     if beta <= 0.0:
@@ -1272,14 +1318,16 @@ def rectwg_lambda_g(
 def rectwg_a_for_fc(fc: float, er: float = 1.0, mur: float = 1.0, m: int = 1):
     """Broad-wall dimension in metres for target cutoff frequency.
 
+    Algebraic inverse of the n=0 rectangular-waveguide cutoff formula.
+
     Args:
-        fc cutoff frequency [Hz], er/mur medium constants, m mode index.
+        fc (float): Cutoff frequency in hertz.
+        er (float): Relative permittivity.
+        mur (float): Relative permeability.
+        m (int): Mode order or index.
 
     Returns:
         Broad-wall dimension in metres for target cutoff frequency.
-
-    Model:
-        Algebraic inverse of the n=0 rectangular-waveguide cutoff formula.
     """
     fc = float(fc)
     if fc <= 0.0 or m <= 0:
@@ -1290,14 +1338,16 @@ def rectwg_a_for_fc(fc: float, er: float = 1.0, mur: float = 1.0, m: int = 1):
 def rectwg_te10_a_for_z0(z0: float, f: float, er: float = 1.0, mur: float = 1.0):
     """Broad-wall dimension in metres for target TE10 wave impedance.
 
+    Infer cutoff from target impedance and frequency, then invert cutoff.
+
     Args:
-        z0 target TE impedance [Ohm], f frequency [Hz], er/mur medium constants.
+        z0 (float): Target impedance in ohms.
+        f (float): Frequency in hertz.
+        er (float): Relative permittivity.
+        mur (float): Relative permeability.
 
     Returns:
         Broad-wall dimension in metres for target TE10 wave impedance.
-
-    Model:
-        Infer cutoff from target impedance and frequency, then invert cutoff.
     """
     z0 = float(z0)
     f = float(f)
@@ -1312,6 +1362,11 @@ def rectwg_te10_a_for_z0(z0: float, f: float, er: float = 1.0, mur: float = 1.0)
     return rectwg_a_for_fc(fc, er=er, mur=mur, m=1)
 
 
+############################################################
+#                    COUPLED MICROSTRIP                    #
+############################################################
+
+
 def coupled_microstrip_z0_even_odd(
     W: float,
     S: float,
@@ -1322,16 +1377,19 @@ def coupled_microstrip_z0_even_odd(
 ):
     """Return (even-mode, odd-mode) coupled-microstrip impedances in ohms.
 
+    Kirschning/Jansen empirical modal filling and coupling; optional frequency
+    dispersion.
+
     Args:
-        W line width [m], S edge spacing [m], th substrate height [m], er relative
-        permittivity, t thickness [m], f optional frequency [Hz].
+        W (float): Conductor width in metres.
+        S (float): Edge gap or coplanar slot in metres.
+        th (float): Substrate height in metres.
+        er (float): Relative permittivity.
+        t (float): Conductor thickness in metres.
+        f (float | None): Frequency in hertz.
 
     Returns:
         Return (even-mode, odd-mode) coupled-microstrip impedances in ohms.
-
-    Model:
-        Kirschning/Jansen empirical modal filling and coupling; optional frequency
-        dispersion.
     """
     h = float(th)
     w = float(W)
@@ -1612,22 +1670,31 @@ def differential_cpw_zdiff_zcm(
 ):
     """Reject unqualified differential CPW and grounded-CPW estimates.
 
+    The former capacitance-sum shortcut had an incorrect common-mode limit; no
+    validated coupled solver is implemented.
+
     Args:
-        W width [m], S_ground trace-to-ground slot [m], S_pair pair gap [m], th
-        substrate height [m], er relative permittivity, t thickness [m],
-        has_metal_backside model flag, f optional frequency [Hz].
+        W (float): Conductor width in metres.
+        S_ground (float): Trace-to-lateral-ground slot in metres.
+        S_pair (float): Gap between the two signal traces in metres.
+        th (float): Substrate height in metres.
+        er (float): Relative permittivity.
+        t (float): Conductor thickness in metres.
+        has_metal_backside (bool): Include an ideal continuous backside ground plane.
+        f (float | None): Frequency in hertz.
 
     Raises:
         NotImplementedError: No validated coupled CPW or grounded-CPW model.
-
-    Model:
-        The former capacitance-sum shortcut had an incorrect common-mode limit; no
-        validated coupled solver is implemented.
     """
     raise NotImplementedError(
         "Differential CPW/DCPWG modal impedance needs a coupled conformal or field solver; "
         "the former capacitance-sum approximation has an incorrect common-mode limit."
     )
+
+
+############################################################
+#                     STACKUP API VIEWS                    #
+############################################################
 
 
 class _MicrostripAPI:
@@ -1646,8 +1713,13 @@ class _MicrostripAPI:
         """Solve microstrip characteristic impedance on a stackup pair.
 
         Args:
-            w width [unit], layer/ground_layer indices, f0 frequency [Hz], er override
-            dielectric, t thickness [unit].
+            w (float): Conductor width in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ground_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
 
         Returns:
             Single-ended impedance in ohms.
@@ -1672,8 +1744,13 @@ class _MicrostripAPI:
         """Solve microstrip effective permittivity on a stackup pair.
 
         Args:
-            w width [unit], layer/ground_layer indices, f0 frequency [Hz], er override
-            dielectric, t thickness [unit].
+            w (float): Conductor width in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ground_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
 
         Returns:
             Dimensionless effective relative permittivity.
@@ -1702,9 +1779,17 @@ class _MicrostripAPI:
         """Inverse microstrip width from target impedance.
 
         Args:
-            Z0 target impedance, layer/ground_layer indices, f0 frequency [Hz], er
-            override, t thickness [unit], w_min/w_max search bounds [unit], n sample
-            count.
+            Z0 (float): Target impedance in ohms.
+            layer (int): Layer index in the calculator stackup.
+            ground_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
+            w_min (float | None): Optional inverse-search bound in stackup units.
+            w_max (float | None): Optional inverse-search bound in stackup units.
+            n (int): Inverse-search sample count.
+            incl_dispersion (bool): Include the frequency-dispersion correction.
 
         Returns:
             Solved geometry in stackup units.
@@ -1745,9 +1830,13 @@ class _MicrostripAPI:
         """Quarter-wave physical length helper for microstrip.
 
         Args:
-            f design frequency [Hz], layer/ground_layer indices, f0 material/model
-            frequency [Hz], w optional fixed width [unit], Z0 target impedance, t
-            thickness [unit].
+            f (float): Frequency in hertz.
+            layer (int): Layer index in the calculator stackup.
+            ground_layer (int): Layer index in the calculator stackup.
+            f0 (float | None): Frequency in hertz.
+            w (float | None): Conductor width in stackup units.
+            Z0 (float): Target impedance in ohms.
+            t (float): Conductor thickness in stackup units.
 
         Returns:
             Physical quarter-wave length in stackup units.
@@ -1776,8 +1865,13 @@ class _StriplineAPI:
         """Solve centered stripline impedance between two ground layers.
 
         Args:
-            w width [unit], gnd_top/gnd_bot indices, f0 frequency [Hz], er override
-            dielectric, t thickness [unit].
+            w (float): Conductor width in stackup units.
+            gnd_top (int): Layer index in the calculator stackup.
+            gnd_bot (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
 
         Returns:
             Single-ended impedance in ohms.
@@ -1801,8 +1895,16 @@ class _StriplineAPI:
         """Inverse stripline width from target impedance.
 
         Args:
-            Z0 target impedance, gnd_top/gnd_bot indices, f0 frequency [Hz], er override,
-            t thickness [unit], w_min/w_max bounds [unit], n sample count.
+            Z0 (float): Target impedance in ohms.
+            gnd_top (int): Layer index in the calculator stackup.
+            gnd_bot (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
+            w_min (float | None): Optional inverse-search bound in stackup units.
+            w_max (float | None): Optional inverse-search bound in stackup units.
+            n (int): Inverse-search sample count.
 
         Returns:
             Solved geometry in stackup units.
@@ -1836,8 +1938,13 @@ class _EdgeCoupledStriplineAPI:
         """Edge-coupled stripline odd-mode impedance.
 
         Args:
-            w width [unit], s edge spacing [unit], gnd_top/gnd_bot indices, f0 frequency
-            [Hz], er override dielectric.
+            w (float): Conductor width in stackup units.
+            s (float): Edge gap or coplanar slot in stackup units.
+            gnd_top (int): Layer index in the calculator stackup.
+            gnd_bot (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
 
         Returns:
             Odd-mode impedance in ohms.
@@ -1860,8 +1967,13 @@ class _EdgeCoupledStriplineAPI:
         """Edge-coupled stripline differential impedance.
 
         Args:
-            w width [unit], s edge spacing [unit], gnd_top/gnd_bot indices, f0 frequency
-            [Hz], er override dielectric.
+            w (float): Conductor width in stackup units.
+            s (float): Edge gap or coplanar slot in stackup units.
+            gnd_top (int): Layer index in the calculator stackup.
+            gnd_bot (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
 
         Returns:
             Differential impedance in ohms.
@@ -1887,9 +1999,16 @@ class _EdgeCoupledStriplineAPI:
         """Inverse edge-coupled stripline width from target differential impedance.
 
         Args:
-            Zdiff target differential impedance, s fixed spacing [unit], gnd_top/gnd_bot
-            indices, f0 frequency [Hz], er override, w_min/w_max bounds [unit], n sample
-            count.
+            Zdiff (float): Target impedance in ohms.
+            s (float): Edge gap or coplanar slot in stackup units.
+            gnd_top (int): Layer index in the calculator stackup.
+            gnd_bot (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            w_min (float | None): Optional inverse-search bound in stackup units.
+            w_max (float | None): Optional inverse-search bound in stackup units.
+            n (int): Inverse-search sample count.
 
         Returns:
             Solved geometry in stackup units.
@@ -1921,9 +2040,16 @@ class _EdgeCoupledStriplineAPI:
         """Inverse edge-coupled stripline spacing from target differential impedance.
 
         Args:
-            Zdiff target differential impedance, w fixed width [unit], gnd_top/gnd_bot
-            indices, f0 frequency [Hz], er override, s_min/s_max bounds [unit], n sample
-            count.
+            Zdiff (float): Target impedance in ohms.
+            w (float): Conductor width in stackup units.
+            gnd_top (int): Layer index in the calculator stackup.
+            gnd_bot (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            s_min (float | None): Optional inverse-search bound in stackup units.
+            s_max (float | None): Optional inverse-search bound in stackup units.
+            n (int): Inverse-search sample count.
 
         Returns:
             Solved geometry in stackup units.
@@ -1957,8 +2083,13 @@ class _BroadsideCoupledStriplineAPI:
         """Broadside-coupled stripline differential/common-mode impedances.
 
         Args:
-            w strip width [unit], g broadside spacing [unit], gnd_top/gnd_bot indices, f0
-            frequency [Hz], er override dielectric.
+            w (float): Conductor width in stackup units.
+            g (float): Broadside spacing in stackup units.
+            gnd_top (int): Layer index in the calculator stackup.
+            gnd_bot (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
 
         Returns:
             (differential impedance, common-mode impedance) in ohms.
@@ -1985,9 +2116,16 @@ class _BroadsideCoupledStriplineAPI:
         """Inverse broadside stripline width from target differential impedance.
 
         Args:
-            Zdiff target differential impedance, g fixed broadside spacing [unit],
-            gnd_top/gnd_bot indices, f0 frequency [Hz], er override, w_min/w_max bounds
-            [unit], n sample count.
+            Zdiff (float): Target impedance in ohms.
+            g (float): Broadside spacing in stackup units.
+            gnd_top (int): Layer index in the calculator stackup.
+            gnd_bot (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            w_min (float | None): Optional inverse-search bound in stackup units.
+            w_max (float | None): Optional inverse-search bound in stackup units.
+            n (int): Inverse-search sample count.
 
         Returns:
             Solved geometry in stackup units.
@@ -2019,9 +2157,16 @@ class _BroadsideCoupledStriplineAPI:
         """Inverse broadside stripline spacing from target differential impedance.
 
         Args:
-            Zdiff target differential impedance, w fixed width [unit], gnd_top/gnd_bot
-            indices, f0 frequency [Hz], er override, g_min/g_max bounds [unit], n sample
-            count.
+            Zdiff (float): Target impedance in ohms.
+            w (float): Conductor width in stackup units.
+            gnd_top (int): Layer index in the calculator stackup.
+            gnd_bot (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            g_min (float | None): Optional inverse-search bound in stackup units.
+            g_max (float | None): Optional inverse-search bound in stackup units.
+            n (int): Inverse-search sample count.
 
         Returns:
             Solved geometry in stackup units.
@@ -2084,8 +2229,14 @@ class _CPWAPI:
         """CPW/GCPW characteristic impedance from stackup geometry.
 
         Args:
-            w center width [unit], s slot [unit], layer/ref_layer indices, f0 frequency
-            [Hz], er override dielectric, t thickness [unit].
+            w (float): Conductor width in stackup units.
+            s (float): Edge gap or coplanar slot in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ref_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
 
         Returns:
             Single-ended impedance in ohms.
@@ -2117,8 +2268,14 @@ class _CPWAPI:
         """CPW/GCPW effective permittivity from stackup geometry.
 
         Args:
-            w center width [unit], s slot [unit], layer/ref_layer indices, f0 frequency
-            [Hz], er override dielectric, t thickness [unit].
+            w (float): Conductor width in stackup units.
+            s (float): Edge gap or coplanar slot in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ref_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
 
         Returns:
             Dimensionless effective relative permittivity.
@@ -2153,9 +2310,17 @@ class _CPWAPI:
         """Inverse CPW/GCPW center width from target impedance.
 
         Args:
-            Z0 target impedance, s fixed slot [unit], layer/ref_layer indices, f0
-            frequency [Hz], er override, t thickness [unit], w_min/w_max bounds [unit], n
-            sample count.
+            Z0 (float): Target impedance in ohms.
+            s (float): Edge gap or coplanar slot in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ref_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
+            w_min (float | None): Optional inverse-search bound in stackup units.
+            w_max (float | None): Optional inverse-search bound in stackup units.
+            n (int): Inverse-search sample count.
 
         Returns:
             Solved geometry in stackup units.
@@ -2198,8 +2363,14 @@ class _EdgeCoupledMicrostripAPI:
         """Edge-coupled microstrip even/odd modal impedances.
 
         Args:
-            w width [unit], s edge spacing [unit], layer/ground_layer indices, f0
-            frequency [Hz], er override dielectric, t thickness [unit].
+            w (float): Conductor width in stackup units.
+            s (float): Edge gap or coplanar slot in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ground_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
 
         Returns:
             (even-mode impedance, odd-mode impedance) in ohms.
@@ -2228,8 +2399,14 @@ class _EdgeCoupledMicrostripAPI:
         """Edge-coupled microstrip differential/common-mode impedances.
 
         Args:
-            w width [unit], s edge spacing [unit], layer/ground_layer indices, f0
-            frequency [Hz], er override dielectric, t thickness [unit].
+            w (float): Conductor width in stackup units.
+            s (float): Edge gap or coplanar slot in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ground_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
 
         Returns:
             (differential impedance, common-mode impedance) in ohms.
@@ -2255,9 +2432,17 @@ class _EdgeCoupledMicrostripAPI:
         """Inverse edge-coupled microstrip width from target differential impedance.
 
         Args:
-            Zdiff target differential impedance, s fixed spacing [unit],
-            layer/ground_layer indices, f0 frequency [Hz], er override, t thickness
-            [unit], w_min/w_max bounds [unit], n sample count.
+            Zdiff (float): Target impedance in ohms.
+            s (float): Edge gap or coplanar slot in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ground_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
+            w_min (float | None): Optional inverse-search bound in stackup units.
+            w_max (float | None): Optional inverse-search bound in stackup units.
+            n (int): Inverse-search sample count.
 
         Returns:
             Solved geometry in stackup units.
@@ -2294,9 +2479,17 @@ class _EdgeCoupledMicrostripAPI:
         """Inverse edge-coupled microstrip spacing from target differential impedance.
 
         Args:
-            Zdiff target differential impedance, w fixed width [unit], layer/ground_layer
-            indices, f0 frequency [Hz], er override, t thickness [unit], s_min/s_max
-            bounds [unit], n sample count.
+            Zdiff (float): Target impedance in ohms.
+            w (float): Conductor width in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ground_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
+            s_min (float | None): Optional inverse-search bound in stackup units.
+            s_max (float | None): Optional inverse-search bound in stackup units.
+            n (int): Inverse-search sample count.
 
         Returns:
             Solved geometry in stackup units.
@@ -2337,9 +2530,15 @@ class _DifferentialCPWAPI:
         """Differential CPW/DCPWG differential/common-mode impedances.
 
         Args:
-            w width [unit], s_pair pair gap [unit], s_ground trace-to-ground slot [unit],
-            layer/ref_layer indices, f0 frequency [Hz], er override dielectric, t
-            thickness [unit].
+            w (float): Conductor width in stackup units.
+            s_pair (float): Gap between the two signal traces in stackup units.
+            s_ground (float): Trace-to-lateral-ground slot in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ref_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
 
         Returns:
             No value: raises NotImplementedError until a qualified coupled solver exists.
@@ -2375,9 +2574,18 @@ class _DifferentialCPWAPI:
         """Inverse differential CPW/DCPWG width from target differential impedance.
 
         Args:
-            Zdiff target differential impedance, s_pair fixed pair gap [unit], s_ground
-            fixed trace-to-ground slot [unit], layer/ref_layer indices, f0 frequency [Hz],
-            er override, t thickness [unit], w_min/w_max bounds [unit], n sample count.
+            Zdiff (float): Target impedance in ohms.
+            s_pair (float): Gap between the two signal traces in stackup units.
+            s_ground (float): Trace-to-lateral-ground slot in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ref_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
+            w_min (float | None): Optional inverse-search bound in stackup units.
+            w_max (float | None): Optional inverse-search bound in stackup units.
+            n (int): Inverse-search sample count.
 
         Returns:
             No value: raises NotImplementedError until a qualified coupled solver exists.
@@ -2420,9 +2628,18 @@ class _DifferentialCPWAPI:
         """Inverse differential CPW/DCPWG pair spacing from target differential impedance.
 
         Args:
-            Zdiff target differential impedance, w fixed width [unit], s_ground fixed
-            trace-to-ground slot [unit], layer/ref_layer indices, f0 frequency [Hz], er
-            override, t thickness [unit], s_min/s_max bounds [unit], n sample count.
+            Zdiff (float): Target impedance in ohms.
+            w (float): Conductor width in stackup units.
+            s_ground (float): Trace-to-lateral-ground slot in stackup units.
+            layer (int): Layer index in the calculator stackup.
+            ref_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            t (float): Conductor thickness in stackup units.
+            s_min (float | None): Optional inverse-search bound in stackup units.
+            s_max (float | None): Optional inverse-search bound in stackup units.
+            n (int): Inverse-search sample count.
 
         Returns:
             No value: raises NotImplementedError until a qualified coupled solver exists.
@@ -2461,7 +2678,9 @@ class _CoaxAPI:
         """Coax characteristic impedance wrapper in user geometry units.
 
         Args:
-            d_inner/d_outer diameters [unit], er relative permittivity.
+            d_inner (float): Inner conductor diameter in stackup units.
+            d_outer (float): Outer conductor diameter in stackup units.
+            er (float): Relative permittivity of the medium.
 
         Returns:
             Single-ended impedance in ohms.
@@ -2472,7 +2691,9 @@ class _CoaxAPI:
         """Coax inverse inner diameter from target impedance.
 
         Args:
-            Z0 target impedance, d_outer outer diameter [unit], er relative permittivity.
+            Z0 (float): Target impedance in ohms.
+            d_outer (float): Outer conductor diameter in stackup units.
+            er (float): Relative permittivity of the medium.
 
         Returns:
             Solved geometry in stackup units.
@@ -2493,8 +2714,13 @@ class _CoaxAPI:
         """Coax TE cutoff frequency wrapper.
 
         Args:
-            d_inner/d_outer diameters [unit], er/mur medium constants, n/m mode indices,
-            exact exact-root flag.
+            d_inner (float): Inner conductor diameter in stackup units.
+            d_outer (float): Outer conductor diameter in stackup units.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
+            n (int): Mode order or index.
+            m (int): Mode order or index.
+            exact (bool): Solve the modal eigenvalue rather than using the cutoff estimate.
 
         Returns:
             TE-mode cutoff frequency in hertz.
@@ -2516,8 +2742,13 @@ class _CoaxAPI:
         """Coax TM cutoff frequency wrapper.
 
         Args:
-            d_inner/d_outer diameters [unit], er/mur medium constants, n/m mode indices,
-            exact exact-root flag.
+            d_inner (float): Inner conductor diameter in stackup units.
+            d_outer (float): Outer conductor diameter in stackup units.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
+            n (int): Mode order or index.
+            m (int): Mode order or index.
+            exact (bool): Solve the modal eigenvalue rather than using the cutoff estimate.
 
         Returns:
             TM-mode cutoff frequency in hertz.
@@ -2537,8 +2768,11 @@ class _CoaxAPI:
         """Coax default cutoff pair (TE11, TM01).
 
         Args:
-            d_inner/d_outer diameters [unit], er/mur medium constants, exact exact-root
-            flag.
+            d_inner (float): Inner conductor diameter in stackup units.
+            d_outer (float): Outer conductor diameter in stackup units.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
+            exact (bool): Solve the modal eigenvalue rather than using the cutoff estimate.
 
         Returns:
             (TE11 cutoff, TM01 cutoff) in hertz.
@@ -2567,8 +2801,12 @@ class _TwistedPairAPI:
         """Twisted-pair effective permittivity wrapper.
 
         Args:
-            d_center center spacing [unit], d_wire wire diameter [unit], er/er1 dielectric
-            terms, twists_per_len turns per unit length, ptfe branch flag.
+            d_center (float): Wire centre-to-centre spacing in stackup units.
+            d_wire (float): Wire conductor diameter in stackup units.
+            er (float): Relative permittivity of the medium.
+            er1 (float): Relative permittivity of the surrounding medium.
+            twists_per_len (float): Twists per stackup length unit.
+            ptfe (bool): Use the PTFE branch of the empirical dielectric model.
 
         Returns:
             Dimensionless effective relative permittivity.
@@ -2596,8 +2834,12 @@ class _TwistedPairAPI:
         """Twisted-pair impedance wrapper.
 
         Args:
-            d_center center spacing [unit], d_wire wire diameter [unit], er/er1 dielectric
-            terms, twists_per_len turns per unit length, ptfe branch flag.
+            d_center (float): Wire centre-to-centre spacing in stackup units.
+            d_wire (float): Wire conductor diameter in stackup units.
+            er (float): Relative permittivity of the medium.
+            er1 (float): Relative permittivity of the surrounding medium.
+            twists_per_len (float): Twists per stackup length unit.
+            ptfe (bool): Use the PTFE branch of the empirical dielectric model.
 
         Returns:
             Single-ended impedance in ohms.
@@ -2625,8 +2867,12 @@ class _TwistedPairAPI:
         """Twisted-pair inverse center spacing from target impedance.
 
         Args:
-            z0 target impedance, d_wire wire diameter [unit], er/er1 dielectric terms,
-            twists_per_len turns per unit length, ptfe branch flag.
+            z0 (float): Target impedance in ohms.
+            d_wire (float): Wire conductor diameter in stackup units.
+            er (float): Relative permittivity of the medium.
+            er1 (float): Relative permittivity of the surrounding medium.
+            twists_per_len (float): Twists per stackup length unit.
+            ptfe (bool): Use the PTFE branch of the empirical dielectric model.
 
         Returns:
             Solved geometry in stackup units.
@@ -2653,8 +2899,12 @@ class _TwistedPairAPI:
         """Twisted-pair inverse wire diameter from target impedance.
 
         Args:
-            z0 target impedance, d_center center spacing [unit], er/er1 dielectric terms,
-            twists_per_len turns per unit length, ptfe branch flag.
+            z0 (float): Target impedance in ohms.
+            d_center (float): Wire centre-to-centre spacing in stackup units.
+            er (float): Relative permittivity of the medium.
+            er1 (float): Relative permittivity of the surrounding medium.
+            twists_per_len (float): Twists per stackup length unit.
+            ptfe (bool): Use the PTFE branch of the empirical dielectric model.
 
         Returns:
             Solved geometry in stackup units.
@@ -2686,7 +2936,12 @@ class _RectangularWaveguideAPI:
         """Waveguide cutoff frequency wrapper.
 
         Args:
-            a/b waveguide dimensions [unit], m/n mode indices, er/mur medium constants.
+            a (float): Broad waveguide wall in stackup units.
+            b (float): Narrow waveguide wall in stackup units.
+            m (int): Mode order or index.
+            n (int): Mode order or index.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
 
         Returns:
             Mode cutoff frequency in hertz.
@@ -2708,8 +2963,13 @@ class _RectangularWaveguideAPI:
         """Waveguide propagation constant wrapper.
 
         Args:
-            f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium
-            constants.
+            f (float): Frequency in hertz.
+            a (float): Broad waveguide wall in stackup units.
+            b (float): Narrow waveguide wall in stackup units.
+            m (int): Mode order or index.
+            n (int): Mode order or index.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
 
         Returns:
             Propagation constant in radians per metre.
@@ -2733,8 +2993,13 @@ class _RectangularWaveguideAPI:
         """Waveguide guided wavelength wrapper.
 
         Args:
-            f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium
-            constants.
+            f (float): Frequency in hertz.
+            a (float): Broad waveguide wall in stackup units.
+            b (float): Narrow waveguide wall in stackup units.
+            m (int): Mode order or index.
+            n (int): Mode order or index.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
 
         Returns:
             Guided wavelength in stackup units.
@@ -2759,8 +3024,13 @@ class _RectangularWaveguideAPI:
         """Waveguide TE impedance wrapper.
 
         Args:
-            f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium
-            constants.
+            f (float): Frequency in hertz.
+            a (float): Broad waveguide wall in stackup units.
+            b (float): Narrow waveguide wall in stackup units.
+            m (int): Mode order or index.
+            n (int): Mode order or index.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
 
         Returns:
             TE-mode wave impedance in ohms.
@@ -2784,8 +3054,13 @@ class _RectangularWaveguideAPI:
         """Waveguide TM impedance wrapper.
 
         Args:
-            f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium
-            constants.
+            f (float): Frequency in hertz.
+            a (float): Broad waveguide wall in stackup units.
+            b (float): Narrow waveguide wall in stackup units.
+            m (int): Mode order or index.
+            n (int): Mode order or index.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
 
         Returns:
             TM-mode wave impedance in ohms.
@@ -2800,7 +3075,10 @@ class _RectangularWaveguideAPI:
         """Inverse broad wall size from cutoff.
 
         Args:
-            fc cutoff frequency [Hz], er/mur medium constants, m mode index.
+            fc (float): Cutoff frequency in hertz.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
+            m (int): Mode order or index.
 
         Returns:
             Broad-wall dimension in stackup units.
@@ -2811,7 +3089,10 @@ class _RectangularWaveguideAPI:
         """Inverse TE10 broad wall size from TE impedance.
 
         Args:
-            z0 target TE impedance, f frequency [Hz], er/mur medium constants.
+            z0 (float): Target impedance in ohms.
+            f (float): Frequency in hertz.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
 
         Returns:
             Broad-wall dimension in stackup units.
@@ -2832,8 +3113,14 @@ class _RectangularWaveguideAPI:
         """Physical length for desired phase angle in selected mode.
 
         Args:
-            angle_rad target phase angle [rad], f frequency [Hz], a/b dimensions [unit],
-            m/n mode indices, er/mur medium constants.
+            angle_rad (float): Target phase angle in radians.
+            f (float): Frequency in hertz.
+            a (float): Broad waveguide wall in stackup units.
+            b (float): Narrow waveguide wall in stackup units.
+            m (int): Mode order or index.
+            n (int): Inverse-search sample count.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
 
         Returns:
             Physical length in stackup units.
@@ -2849,7 +3136,11 @@ class _RectangularWaveguideAPI:
         """Convenience TE10 report dict.
 
         Args:
-            f frequency [Hz], a/b dimensions [unit], er/mur medium constants.
+            f (float): Frequency in hertz.
+            a (float): Broad waveguide wall in stackup units.
+            b (float): Narrow waveguide wall in stackup units.
+            er (float): Relative permittivity of the medium.
+            mur (float): Relative permeability.
 
         Returns:
             Dictionary with TE10 cutoff, impedance, beta, wavelength and propagation flag.
@@ -2872,8 +3163,10 @@ class PCBCalculator:
         """Initialize the stackup-bound calculator namespace.
 
         Args:
-            layers z-coordinates [unit], materials dielectric objects per layer interval,
-            unit conversion to meters.
+            layers (np.ndarray): Layer z-coordinates in the configured geometry unit.
+            materials (list[Material]): One dielectric material for each adjacent layer
+                                        interval.
+            unit (float): Metres per configured geometry unit.
 
         Returns:
             None.
@@ -2914,8 +3207,13 @@ class PCBCalculator:
         """Backward-compatible alias for microstrip inverse width solve.
 
         Args:
-            Z0 target impedance, layer/ground_layer indices, f0 frequency [Hz], er
-            override dielectric.
+            Z0 (float): Target impedance in ohms.
+            layer (int): Layer index in the calculator stackup.
+            ground_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
+            include_dispersion (bool): Include the frequency-dispersion correction.
 
         Returns:
             Solved microstrip width in stackup units (legacy alias).
@@ -2933,7 +3231,7 @@ class PCBCalculator:
         """Normalize positive/negative layer index to absolute index.
 
         Args:
-            layer signed layer index.
+            layer (int): Layer index in the calculator stackup.
 
         Returns:
             Absolute zero-based layer index.
@@ -2949,7 +3247,7 @@ class PCBCalculator:
         """Return layer z-coordinate in stackup units.
 
         Args:
-            layer signed layer index.
+            layer (int): Layer index in the calculator stackup.
 
         Returns:
             Layer z-coordinate in stackup units.
@@ -2960,7 +3258,8 @@ class PCBCalculator:
         """Physical distance between two layers.
 
         Args:
-            a/b signed layer indices.
+            a (int): Layer index.
+            b (int): Layer index.
 
         Returns:
             Physical separation in metres.
@@ -2973,11 +3272,15 @@ class PCBCalculator:
         """Effective dielectric constant between two layers.
 
         Args:
-            layer/ground_layer signed indices, f0 frequency [Hz], er optional direct
-            override.
+            layer (int): Layer index in the calculator stackup.
+            ground_layer (int): Layer index in the calculator stackup.
+            f0 (float): Frequency in hertz.
+            er (float | None): Relative permittivity; overrides stackup material when
+                               provided.
 
         Returns:
-            Dimensionless relative permittivity, or ValueError for mixed/unresolved dielectrics.
+            Dimensionless relative permittivity, or ValueError for mixed/unresolved
+            dielectrics.
         """
         if er is not None:
             value = float(er)
