@@ -56,7 +56,7 @@
 # - rectwg_a_for_fc
 # - rectwg_te10_a_for_z0
 # - coupled_microstrip_z0_even_odd
-# - differential_cpw_zdiff_zcm
+# - differential_cpw_zdiff_zcm (unsupported: raises NotImplementedError)
 #
 # Public API namespaces/methods:
 # - _MicrostripAPI: z0, eeff, w_for_z0, quarter_wave
@@ -72,7 +72,6 @@
 #   a_for_z_te10, length_for_angle, te10
 # - PCBCalculator: __init__, z0, layer_index, z, layer_distance, effective_er
 #
-# Last Cleanup: 2025-01-01
 import numpy as np
 from scipy.special import ellipk, ellipkm1, jv, yv
 from emsutil import Material
@@ -85,10 +84,12 @@ MU0 = 4e-7 * PI
 
 
 def _asf(x):
+    """Convert a scalar or array-like input to a float NumPy array."""
     return np.asarray(x, dtype=float)
 
 
 def _ellipk_agm(k):
+    """Evaluate complete elliptic K(k) using the arithmetic-geometric mean."""
     k = np.clip(_asf(k), 0.0, 1.0 - 1e-15)
     a = np.ones_like(k)
     b = np.sqrt(1.0 - k * k)
@@ -103,6 +104,7 @@ def _ellipk_agm(k):
 
 
 def _ellip_ratio(k):
+    """Return K(k)/K(sqrt(1-k**2)) without small-modulus cancellation."""
     k = _asf(k)
     if np.any(~np.isfinite(k)) or np.any(k < 0.0) or np.any(k > 1.0):
         raise ValueError("Elliptic modulus must lie in [0, 1]")
@@ -112,6 +114,7 @@ def _ellip_ratio(k):
 
 
 def _coth(x):
+    """Return coth(x), guarding the removable numerical division near zero."""
     x = _asf(x)
     s = np.sinh(x)
     s = np.where(np.abs(s) < 1e-30, np.sign(s) * 1e-30 + (s == 0) * 1e-30, s)
@@ -119,18 +122,22 @@ def _coth(x):
 
 
 def _sech(x):
+    """Return the hyperbolic secant, 1/cosh(x)."""
     return 1.0 / np.cosh(_asf(x))
 
 
 def _jn(n: int, x: float) -> float:
+    """Return Bessel J of integer order n at x as a Python float."""
     return float(jv(n, x))
 
 
 def _yn(n: int, x: float) -> float:
+    """Return Bessel Y of integer order n at x as a Python float."""
     return float(yv(n, x))
 
 
 def _jnp(n: int, x: float) -> float:
+    """Return the derivative of Bessel J_n using adjacent-order recurrence."""
     n = int(n)
     if n == 0:
         return -_jn(1, x)
@@ -138,6 +145,7 @@ def _jnp(n: int, x: float) -> float:
 
 
 def _ynp(n: int, x: float) -> float:
+    """Return the derivative of Bessel Y_n using adjacent-order recurrence."""
     n = int(n)
     if n == 0:
         return -_yn(1, x)
@@ -145,6 +153,7 @@ def _ynp(n: int, x: float) -> float:
 
 
 def _material_er(mat: Material, f0: float) -> float:
+    """Read relative permittivity from a material at frequency f0 in hertz."""
     er = getattr(mat, "er", None)
     if er is None:
         raise ValueError("Dielectric material has no relative permittivity")
@@ -156,6 +165,7 @@ def _material_er(mat: Material, f0: float) -> float:
 
 
 def _inverse_from_samples(target: float, xs, ys) -> float:
+    """Interpolate an inverse from finite sampled points; reject out-of-range targets."""
     x = _asf(xs)
     y = _asf(ys)
     m = np.isfinite(x) & np.isfinite(y)
@@ -193,6 +203,7 @@ def _inverse_bounds_m(x_min, x_max, unit: float, scale_m: float):
 
 
 def _scan_inverse(target: float, fn, x_min: float, x_max: float, n: int = 501) -> float:
+    """Find a bracket on logarithmic samples and refine an inverse by bisection."""
     if not np.isfinite(target) or not np.isfinite(x_min) or not np.isfinite(x_max):
         raise ValueError("Inverse target and bounds must be finite")
     x0 = float(x_min)
@@ -255,17 +266,27 @@ def _scan_inverse(target: float, fn, x_min: float, x_max: float, n: int = 501) -
 
 
 def _odd_even_from_k(z0, k):
+    """Convert uncoupled Z0 and coupling k to even/odd modal impedances."""
     k = np.clip(_asf(k), 0.0, 0.95)
     zo = _asf(z0) * np.sqrt((1.0 - k) / (1.0 + k))
     ze = _asf(z0) * np.sqrt((1.0 + k) / (1.0 - k))
     return ze, zo
 
 
-# Microstrip characteristic impedance.
-# Args: W trace width [m], th substrate height [m], er relative permittivity, t conductor thickness [m].
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def microstrip_z0(W: float, th: float, er: float, t: float = 0.0):
+    """Single-ended quasi-static microstrip impedance in ohms.
+
+    Args:
+        W trace width [m], th substrate height [m], er relative permittivity, t
+        conductor thickness [m].
+
+    Returns:
+        Single-ended quasi-static microstrip impedance in ohms.
+
+    Model:
+        Piecewise Hammerstad-style air impedance divided by sqrt(epsilon_eff); finite
+        t changes electrical width.
+    """
     W = _asf(W)
     h = float(th)
     u = np.maximum(W / h, 1e-12)
@@ -286,11 +307,20 @@ def microstrip_z0(W: float, th: float, er: float, t: float = 0.0):
     )
 
 
-# Microstrip effective permittivity.
-# Args: W trace width [m], th substrate height [m], er relative permittivity, t conductor thickness [m].
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def microstrip_eeff(W: float, th: float, er: float, t: float = 0.0):
+    """Quasi-static microstrip effective relative permittivity.
+
+    Args:
+        W trace width [m], th substrate height [m], er relative permittivity, t
+        conductor thickness [m].
+
+    Returns:
+        Quasi-static microstrip effective relative permittivity.
+
+    Model:
+        Air/dielectric filling approximation with a narrow-line term and finite-
+        thickness width correction.
+    """
     W = _asf(W)
     h = float(th)
     u = np.maximum(W / h, 1e-12)
@@ -313,14 +343,21 @@ def microstrip_eeff(W: float, th: float, er: float, t: float = 0.0):
     return eeff * thickness_factor
 
 
-# Microstrip effective permittivity with frequency dispersion.
-# Args: W trace width [m], th substrate height [m], er relative permittivity, f frequency [Hz], t thickness [m].
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def microstrip_eeff_dispersion(
     W: float, th: float, er: float, f: float, t: float = 0.0
 ):
-    """Microstrip effective permittivity with frequency dispersion (Kirschning/Jansen)."""
+    """Frequency-dependent microstrip effective relative permittivity.
+
+    Args:
+        W trace width [m], th substrate height [m], er relative permittivity, f
+        frequency [Hz], t thickness [m].
+
+    Returns:
+        Frequency-dependent microstrip effective relative permittivity.
+
+    Model:
+        Kirschning/Jansen empirical interpolation: er - (er - eeff(0))/(1 + P).
+    """
     W = _asf(W)
     h = float(th)
     f = float(f)
@@ -342,12 +379,20 @@ def microstrip_eeff_dispersion(
     return er - (er - ee0) / (1.0 + p)
 
 
-# Microstrip characteristic impedance with frequency dispersion.
-# Args: W trace width [m], th substrate height [m], er relative permittivity, f frequency [Hz], t thickness [m].
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def microstrip_z0_dispersion(W: float, th: float, er: float, f: float, t: float = 0.0):
-    """Microstrip characteristic impedance with frequency dispersion (Kirschning/Jansen)."""
+    """Frequency-dependent microstrip impedance in ohms.
+
+    Args:
+        W trace width [m], th substrate height [m], er relative permittivity, f
+        frequency [Hz], t thickness [m].
+
+    Returns:
+        Frequency-dependent microstrip impedance in ohms.
+
+    Model:
+        Kirschning/Jansen correction: Z0(f) = Z0(0)*(R13/R14)**R17 within the checked
+        range.
+    """
     W = _asf(W)
     h = float(th)
     f = float(f)
@@ -401,11 +446,20 @@ def microstrip_z0_dispersion(W: float, th: float, er: float, f: float, t: float 
     return z0_0 * d
 
 
-# Centered stripline characteristic impedance.
-# Args: W strip width [m], b ground-to-ground spacing [m], er relative permittivity, t conductor thickness [m].
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def stripline_z0(W: float, b: float, er: float, t: float = 0.0):
+    """Centered, homogeneous stripline impedance in ohms.
+
+    Args:
+        W strip width [m], b ground-to-ground spacing [m], er relative permittivity, t
+        conductor thickness [m].
+
+    Returns:
+        Centered, homogeneous stripline impedance in ohms.
+
+    Model:
+        Zero-thickness Cohn elliptic-integral form; positive thickness uses the
+        finite-t logarithmic approximation.
+    """
     W = _asf(W)
     b = float(b)
     t = float(t)
@@ -428,11 +482,19 @@ def stripline_z0(W: float, b: float, er: float, t: float = 0.0):
     )
 
 
-# Edge-coupled stripline odd-mode impedance.
-# Args: W width [m], S edge spacing [m], b cavity height [m], er relative permittivity.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def coupled_stripline_zodd(W: float, S: float, b: float, er: float):
+    """Odd-mode impedance of zero-thickness edge-coupled stripline in ohms.
+
+    Args:
+        W width [m], S edge spacing [m], b cavity height [m], er relative
+        permittivity.
+
+    Returns:
+        Odd-mode impedance of zero-thickness edge-coupled stripline in ohms.
+
+    Model:
+        Cohn conformal-map modulus k from W, S, b, then eta0*K(k)/(4*sqrt(er)*K(k')).
+    """
     W = _asf(W)
     b = float(b)
     s = _asf(S)
@@ -444,18 +506,22 @@ def coupled_stripline_zodd(W: float, S: float, b: float, er: float):
     return (n0 / (4.0 * np.sqrt(er))) * _ellip_ratio(k0)
 
 
-# Edge-coupled stripline differential impedance.
-# Args: W width [m], S edge spacing [m], b cavity height [m], er relative permittivity.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def coupled_stripline_zdiff(W: float, S: float, b: float, er: float):
+    """Differential edge-coupled stripline impedance in ohms.
+
+    Args:
+        W width [m], S edge spacing [m], b cavity height [m], er relative
+        permittivity.
+
+    Returns:
+        Differential edge-coupled stripline impedance in ohms.
+
+    Model:
+        Equal and opposite excitation gives Zdiff = 2*Zodd.
+    """
     return 2.0 * coupled_stripline_zodd(W, S, b, er)
 
 
-# Broadside-coupled stripline differential and common-mode impedances.
-# Args: W strip width [m], G broadside gap [m], b cavity height [m], er relative permittivity.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def broadside_stripline_zdiff_zcm(W: float, G: float, b: float, er: float):
     # Full Cohn broadside-coupled stripline (zero-thickness conductors):
     #   Z0e = (188.3/sqrt(er)) * K(k')/K(k)
@@ -463,6 +529,19 @@ def broadside_stripline_zdiff_zcm(W: float, G: float, b: float, er: float):
     # with implicit relation for width ratio (w = W/b, s = G/b):
     #   w = (2/pi) * atanh(R) - s * atanh(R/k)
     #   R = sqrt((k - s) / (1/k - s))
+    """Return (differential, common-mode) broadside stripline impedances in ohms.
+
+    Args:
+        W strip width [m], G broadside gap [m], b cavity height [m], er relative
+        permittivity.
+
+    Returns:
+        Return (differential, common-mode) broadside stripline impedances in ohms.
+
+    Model:
+        Solve Cohn's implicit width/modulus equation, then use Zdiff=2*Zodd and
+        Zcm=Zeven/2.
+    """
     ws = _asf(W)
     g = float(G)
     b = float(b)
@@ -519,10 +598,6 @@ def broadside_stripline_zdiff_zcm(W: float, G: float, b: float, er: float):
     return out_zd, out_zc
 
 
-# CPW/GCPW characteristic impedance.
-# Args: W center width [m], S slot [m], th substrate height [m], er relative permittivity, t thickness [m], has_metal_backside model flag.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def cpw_z0(
     W: float,
     S: float,
@@ -531,6 +606,19 @@ def cpw_z0(
     t: float = 0.0,
     has_metal_backside: bool = False,
 ):
+    """Single-ended CPW or grounded-CPW impedance in ohms.
+
+    Args:
+        W center width [m], S slot [m], th substrate height [m], er relative
+        permittivity, t thickness [m], has_metal_backside model flag.
+
+    Returns:
+        Single-ended CPW or grounded-CPW impedance in ohms.
+
+    Model:
+        Conformal-map elliptic ratios give air/dielectric filling; optional t applies
+        the first-order slot correction.
+    """
     W = _asf(W)
     h = float(th)
     s = float(S)
@@ -570,10 +658,6 @@ def cpw_z0(
     return zr / np.sqrt(eeff)
 
 
-# CPW/GCPW effective permittivity.
-# Args: W center width [m], S slot [m], th substrate height [m], er relative permittivity, t thickness [m], has_metal_backside model flag.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def cpw_eeff(
     W: float,
     S: float,
@@ -582,6 +666,18 @@ def cpw_eeff(
     t: float = 0.0,
     has_metal_backside: bool = False,
 ):
+    """Effective relative permittivity of CPW or grounded CPW.
+
+    Args:
+        W center width [m], S slot [m], th substrate height [m], er relative
+        permittivity, t thickness [m], has_metal_backside model flag.
+
+    Returns:
+        Effective relative permittivity of CPW or grounded CPW.
+
+    Model:
+        Partial capacitance filling factor from conformal-map elliptic ratios.
+    """
     W = _asf(W)
     h = float(th)
     s = float(S)
@@ -605,10 +701,6 @@ def cpw_eeff(
     return eeff
 
 
-# CPW/GCPW effective permittivity with frequency dispersion.
-# Args: W center width [m], S slot [m], th substrate height [m], er relative permittivity, f frequency [Hz], t thickness [m], has_metal_backside model flag.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def cpw_eeff_dispersion(
     W: float,
     S: float,
@@ -618,7 +710,19 @@ def cpw_eeff_dispersion(
     t: float = 0.0,
     has_metal_backside: bool = False,
 ):
-    """CPW/GCPW effective permittivity with Qucs-style frequency dispersion."""
+    """Frequency-dependent CPW or grounded-CPW effective permittivity.
+
+    Args:
+        W center width [m], S slot [m], th substrate height [m], er relative
+        permittivity, f frequency [Hz], t thickness [m], has_metal_backside model
+        flag.
+
+    Returns:
+        Frequency-dependent CPW or grounded-CPW effective permittivity.
+
+    Model:
+        Empirical Qucs interpolation in sqrt(epsilon_eff) toward sqrt(er).
+    """
     ee0 = _asf(cpw_eeff(W, S, th, er, t=t, has_metal_backside=has_metal_backside))
     f = float(f)
     if f <= 0.0 or er <= 1.0:
@@ -640,10 +744,6 @@ def cpw_eeff_dispersion(
     return sr_er_f * sr_er_f
 
 
-# CPW/GCPW impedance with frequency dispersion.
-# Args: W center width [m], S slot [m], th substrate height [m], er relative permittivity, f frequency [Hz], t thickness [m], has_metal_backside model flag.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def cpw_z0_dispersion(
     W: float,
     S: float,
@@ -653,7 +753,19 @@ def cpw_z0_dispersion(
     t: float = 0.0,
     has_metal_backside: bool = False,
 ):
-    """CPW/GCPW characteristic impedance with Qucs-style frequency dispersion."""
+    """Frequency-dependent CPW or grounded-CPW impedance in ohms.
+
+    Args:
+        W center width [m], S slot [m], th substrate height [m], er relative
+        permittivity, f frequency [Hz], t thickness [m], has_metal_backside model
+        flag.
+
+    Returns:
+        Frequency-dependent CPW or grounded-CPW impedance in ohms.
+
+    Model:
+        Scale quasi-static Z0 by sqrt(epsilon_eff(0)/epsilon_eff(f)).
+    """
     z0_qs = _asf(cpw_z0(W, S, th, er, t=t, has_metal_backside=has_metal_backside))
     ee0 = _asf(cpw_eeff(W, S, th, er, t=t, has_metal_backside=has_metal_backside))
     eef = _asf(
@@ -673,6 +785,7 @@ def _cpw_cap_per_len(
     has_metal_backside: bool = False,
     f: float | None = None,
 ):
+    """Convert CPW impedance and effective permittivity to capacitance per metre."""
     if f is None:
         z = _asf(cpw_z0(W, S, th, er, t=t, has_metal_backside=has_metal_backside))
         ee = _asf(cpw_eeff(W, S, th, er, t=t, has_metal_backside=has_metal_backside))
@@ -698,27 +811,44 @@ def _cpw_cap_per_len(
     return c, c_air, z
 
 
-# Coax characteristic impedance.
-# Args: d_inner inner conductor diameter [m], d_outer outer conductor diameter [m], er relative permittivity.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def coax_z0(d_inner: float, d_outer: float, er: float):
+    """TEM coaxial-line impedance in ohms.
+
+    Args:
+        d_inner inner conductor diameter [m], d_outer outer conductor diameter [m], er
+        relative permittivity.
+
+    Returns:
+        TEM coaxial-line impedance in ohms.
+
+    Model:
+        eta0*ln(d_outer/d_inner)/(2*pi*sqrt(er)).
+    """
     d_inner = _asf(d_inner)
     d_outer = _asf(d_outer)
     return (n0 / (2.0 * PI * np.sqrt(er))) * np.log(d_outer / d_inner)
 
 
-# Coax inner-diameter inverse solve from target impedance.
-# Args: Z0 target impedance [Ohm], d_outer outer diameter [m], er relative permittivity.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def coax_d_for_z0(Z0: float, d_outer: float, er: float):
+    """Inner coax diameter in metres for a target TEM impedance.
+
+    Args:
+        Z0 target impedance [Ohm], d_outer outer diameter [m], er relative
+        permittivity.
+
+    Returns:
+        Inner coax diameter in metres for a target TEM impedance.
+
+    Model:
+        Algebraic inverse of the logarithmic coax formula.
+    """
     return float(d_outer) / np.exp(2.0 * PI * np.sqrt(er) * float(Z0) / n0)
 
 
 def _coax_cutoff_te_approx(
     d_inner: float, d_outer: float, er: float = 1.0, mur: float = 1.0
 ):
+    """Return an approximate TE cutoff when the exact annular root is unavailable."""
     return C0 / (
         PI * (float(d_outer) + float(d_inner)) * np.sqrt(float(er) * float(mur))
     )
@@ -727,12 +857,14 @@ def _coax_cutoff_te_approx(
 def _coax_cutoff_tm_approx(
     d_inner: float, d_outer: float, er: float = 1.0, mur: float = 1.0
 ):
+    """Return an approximate TM cutoff when the exact annular root is unavailable."""
     return C0 / (
         2.0 * (float(d_outer) - float(d_inner)) * np.sqrt(float(er) * float(mur))
     )
 
 
 def _coax_mode_char(mode: str, n: int, x: float, ratio: float) -> float:
+    """Evaluate the TE/TM annular Bessel boundary-condition determinant."""
     xa = float(x)
     xb = float(ratio) * xa
     if mode == "tm":
@@ -743,6 +875,7 @@ def _coax_mode_char(mode: str, n: int, x: float, ratio: float) -> float:
 
 
 def _bisect_root(fn, x0: float, x1: float, iters: int = 80) -> float:
+    """Refine a sign-changing scalar root within a bracket by bisection."""
     f0 = float(fn(x0))
     f1 = float(fn(x1))
     if not np.isfinite(f0) or not np.isfinite(f1):
@@ -770,6 +903,7 @@ def _bisect_root(fn, x0: float, x1: float, iters: int = 80) -> float:
 
 
 def _coax_mode_root(n: int, m: int, d_inner: float, d_outer: float, mode: str):
+    """Locate an annular coax TE/TM transverse-wavenumber eigen-root."""
     n = int(n)
     m = int(m)
     if n < 0 or m < 1:
@@ -811,10 +945,6 @@ def _coax_mode_root(n: int, m: int, d_inner: float, d_outer: float, mode: str):
     raise ValueError(f"Failed to find coax {mode.upper()}({n},{m}) root.")
 
 
-# Coax TE cutoff frequency.
-# Args: d_inner inner diameter [m], d_outer outer diameter [m], er/mur medium constants, n/m mode indices, exact exact-root flag.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def coax_cutoff_te(
     d_inner: float,
     d_outer: float,
@@ -824,6 +954,18 @@ def coax_cutoff_te(
     m: int = 1,
     exact: bool = True,
 ):
+    """TE_nm coaxial higher-mode cutoff frequency in hertz.
+
+    Args:
+        d_inner inner diameter [m], d_outer outer diameter [m], er/mur medium
+        constants, n/m mode indices, exact exact-root flag.
+
+    Returns:
+        TE_nm coaxial higher-mode cutoff frequency in hertz.
+
+    Model:
+        Solve the annular Bessel-derivative eigenvalue equation when available.
+    """
     if not exact:
         return _coax_cutoff_te_approx(d_inner, d_outer, er=er, mur=mur)
     try:
@@ -833,10 +975,6 @@ def coax_cutoff_te(
         return _coax_cutoff_te_approx(d_inner, d_outer, er=er, mur=mur)
 
 
-# Coax TM cutoff frequency.
-# Args: d_inner inner diameter [m], d_outer outer diameter [m], er/mur medium constants, n/m mode indices, exact exact-root flag.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def coax_cutoff_tm(
     d_inner: float,
     d_outer: float,
@@ -846,6 +984,18 @@ def coax_cutoff_tm(
     m: int = 1,
     exact: bool = True,
 ):
+    """TM_nm coaxial higher-mode cutoff frequency in hertz.
+
+    Args:
+        d_inner inner diameter [m], d_outer outer diameter [m], er/mur medium
+        constants, n/m mode indices, exact exact-root flag.
+
+    Returns:
+        TM_nm coaxial higher-mode cutoff frequency in hertz.
+
+    Model:
+        Solve the annular Bessel-function eigenvalue equation when available.
+    """
     if not exact:
         return _coax_cutoff_tm_approx(d_inner, d_outer, er=er, mur=mur)
     try:
@@ -855,10 +1005,6 @@ def coax_cutoff_tm(
         return _coax_cutoff_tm_approx(d_inner, d_outer, er=er, mur=mur)
 
 
-# Twisted-pair effective permittivity correction.
-# Args: d_center center spacing [m], d_wire wire diameter [m], er bulk dielectric, er1 reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def twisted_pair_eeff(
     d_center: float,
     d_wire: float,
@@ -867,6 +1013,18 @@ def twisted_pair_eeff(
     twists_per_len: float = 0.0,
     ptfe: bool = False,
 ):
+    """Effective relative permittivity for the empirical twisted-pair model.
+
+    Args:
+        d_center center spacing [m], d_wire wire diameter [m], er bulk dielectric, er1
+        reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
+
+    Returns:
+        Effective relative permittivity for the empirical twisted-pair model.
+
+    Model:
+        Blend inner and surrounding dielectric with a twist-dependent filling factor.
+    """
     d_center = float(d_center)
     d_wire = float(d_wire)
     if d_center <= d_wire:
@@ -876,10 +1034,6 @@ def twisted_pair_eeff(
     return float(er1 + q * (er - er1))
 
 
-# Twisted-pair characteristic impedance.
-# Args: d_center center spacing [m], d_wire wire diameter [m], er bulk dielectric, er1 reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def twisted_pair_z0(
     d_center: float,
     d_wire: float,
@@ -888,6 +1042,18 @@ def twisted_pair_z0(
     twists_per_len: float = 0.0,
     ptfe: bool = False,
 ):
+    """Quasi-static twisted-pair impedance in ohms.
+
+    Args:
+        d_center center spacing [m], d_wire wire diameter [m], er bulk dielectric, er1
+        reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
+
+    Returns:
+        Quasi-static twisted-pair impedance in ohms.
+
+    Model:
+        eta0*acosh(d_center/d_wire)/(pi*sqrt(epsilon_eff)).
+    """
     eeff = twisted_pair_eeff(
         d_center, d_wire, er, er1=er1, twists_per_len=twists_per_len, ptfe=ptfe
     )
@@ -895,10 +1061,6 @@ def twisted_pair_z0(
     return n0 / (PI * np.sqrt(eeff)) * np.arccosh(arg)
 
 
-# Twisted-pair inverse solve for center spacing.
-# Args: z0 target impedance [Ohm], d_wire wire diameter [m], er bulk dielectric, er1 reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def twisted_pair_d_center_for_z0(
     z0: float,
     d_wire: float,
@@ -907,6 +1069,18 @@ def twisted_pair_d_center_for_z0(
     twists_per_len: float = 0.0,
     ptfe: bool = False,
 ):
+    """Centre spacing in metres for target twisted-pair impedance.
+
+    Args:
+        z0 target impedance [Ohm], d_wire wire diameter [m], er bulk dielectric, er1
+        reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
+
+    Returns:
+        Centre spacing in metres for target twisted-pair impedance.
+
+    Model:
+        Numerical inverse of the twist-dependent impedance relation.
+    """
     eeff = twisted_pair_eeff(
         d_center=max(2.0 * float(d_wire), float(d_wire) + 1e-12),
         d_wire=d_wire,
@@ -919,10 +1093,6 @@ def twisted_pair_d_center_for_z0(
     return float(float(d_wire) * k)
 
 
-# Twisted-pair inverse solve for wire diameter.
-# Args: z0 target impedance [Ohm], d_center center spacing [m], er bulk dielectric, er1 reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def twisted_pair_d_wire_for_z0(
     z0: float,
     d_center: float,
@@ -931,6 +1101,18 @@ def twisted_pair_d_wire_for_z0(
     twists_per_len: float = 0.0,
     ptfe: bool = False,
 ):
+    """Wire diameter in metres for target twisted-pair impedance.
+
+    Args:
+        z0 target impedance [Ohm], d_center center spacing [m], er bulk dielectric,
+        er1 reference dielectric, twists_per_len turns/m, ptfe PTFE branch flag.
+
+    Returns:
+        Wire diameter in metres for target twisted-pair impedance.
+
+    Model:
+        Numerical inverse of the twist-dependent impedance relation.
+    """
     eeff = twisted_pair_eeff(
         d_center=d_center,
         d_wire=max(0.5 * float(d_center), 1e-12),
@@ -947,13 +1129,21 @@ def twisted_pair_d_wire_for_z0(
     return float(float(d_center) / k)
 
 
-# Rectangular-waveguide cutoff frequency for mode (m, n).
-# Args: a broad wall [m], b narrow wall [m], m/n mode indices, er/mur medium constants.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def rectwg_fc(
     a: float, b: float, m: int = 1, n: int = 0, er: float = 1.0, mur: float = 1.0
 ):
+    """Rectangular-waveguide mode cutoff frequency in hertz.
+
+    Args:
+        a broad wall [m], b narrow wall [m], m/n mode indices, er/mur medium
+        constants.
+
+    Returns:
+        Rectangular-waveguide mode cutoff frequency in hertz.
+
+    Model:
+        c0*sqrt((m/a)**2+(n/b)**2)/(2*sqrt(er*mur)).
+    """
     a = float(a)
     b = float(b)
     if a <= 0.0 or b <= 0.0:
@@ -964,10 +1154,6 @@ def rectwg_fc(
     return 0.5 * C0 * kxy / np.sqrt(float(er) * float(mur))
 
 
-# Rectangular-waveguide propagation constant.
-# Args: f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium constants.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def rectwg_beta(
     f: float,
     a: float,
@@ -977,6 +1163,18 @@ def rectwg_beta(
     er: float = 1.0,
     mur: float = 1.0,
 ):
+    """Propagation constant beta in radians per metre above cutoff.
+
+    Args:
+        f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium
+        constants.
+
+    Returns:
+        Propagation constant beta in radians per metre above cutoff.
+
+    Model:
+        beta = sqrt(k**2-kc**2); the implementation returns zero at/below cutoff.
+    """
     f = float(f)
     if f <= 0.0:
         raise ValueError("Frequency must be > 0.")
@@ -988,10 +1186,6 @@ def rectwg_beta(
     return float(np.sqrt(k * k - kc * kc))
 
 
-# Rectangular-waveguide TE mode impedance.
-# Args: f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium constants.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def rectwg_z_te(
     f: float,
     a: float,
@@ -1001,6 +1195,18 @@ def rectwg_z_te(
     er: float = 1.0,
     mur: float = 1.0,
 ):
+    """TE-mode wave impedance in ohms.
+
+    Args:
+        f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium
+        constants.
+
+    Returns:
+        TE-mode wave impedance in ohms.
+
+    Model:
+        eta/sqrt(1-(fc/f)**2); infinite at/below cutoff.
+    """
     f = float(f)
     fc = rectwg_fc(a, b, m=m, n=n, er=er, mur=mur)
     if f <= fc:
@@ -1008,10 +1214,6 @@ def rectwg_z_te(
     return float(n0 * np.sqrt(float(mur) / float(er)) / np.sqrt(1.0 - (fc / f) ** 2))
 
 
-# Rectangular-waveguide TM mode impedance.
-# Args: f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium constants.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def rectwg_z_tm(
     f: float,
     a: float,
@@ -1021,6 +1223,18 @@ def rectwg_z_tm(
     er: float = 1.0,
     mur: float = 1.0,
 ):
+    """TM-mode wave impedance in ohms.
+
+    Args:
+        f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium
+        constants.
+
+    Returns:
+        TM-mode wave impedance in ohms.
+
+    Model:
+        eta*sqrt(1-(fc/f)**2); zero at/below cutoff.
+    """
     f = float(f)
     fc = rectwg_fc(a, b, m=m, n=n, er=er, mur=mur)
     if f <= fc:
@@ -1028,10 +1242,6 @@ def rectwg_z_tm(
     return float(n0 * np.sqrt(float(mur) / float(er)) * np.sqrt(1.0 - (fc / f) ** 2))
 
 
-# Rectangular-waveguide guided wavelength.
-# Args: f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium constants.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def rectwg_lambda_g(
     f: float,
     a: float,
@@ -1041,28 +1251,54 @@ def rectwg_lambda_g(
     er: float = 1.0,
     mur: float = 1.0,
 ):
+    """Guided wavelength in metres above cutoff.
+
+    Args:
+        f frequency [Hz], a/b dimensions [m], m/n mode indices, er/mur medium
+        constants.
+
+    Returns:
+        Guided wavelength in metres above cutoff.
+
+    Model:
+        2*pi/beta; infinite at/below cutoff.
+    """
     beta = rectwg_beta(f, a, b, m=m, n=n, er=er, mur=mur)
     if beta <= 0.0:
         return np.inf
     return float(TAU / beta)
 
 
-# Rectangular-waveguide inverse solve for broad wall a from cutoff.
-# Args: fc cutoff frequency [Hz], er/mur medium constants, m mode index.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def rectwg_a_for_fc(fc: float, er: float = 1.0, mur: float = 1.0, m: int = 1):
+    """Broad-wall dimension in metres for target cutoff frequency.
+
+    Args:
+        fc cutoff frequency [Hz], er/mur medium constants, m mode index.
+
+    Returns:
+        Broad-wall dimension in metres for target cutoff frequency.
+
+    Model:
+        Algebraic inverse of the n=0 rectangular-waveguide cutoff formula.
+    """
     fc = float(fc)
     if fc <= 0.0 or m <= 0:
         raise ValueError("fc and mode index m must be > 0.")
     return float(m * C0 / (2.0 * fc * np.sqrt(float(er) * float(mur))))
 
 
-# TE10 inverse solve for broad wall a from target TE impedance and frequency.
-# Args: z0 target TE impedance [Ohm], f frequency [Hz], er/mur medium constants.
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def rectwg_te10_a_for_z0(z0: float, f: float, er: float = 1.0, mur: float = 1.0):
+    """Broad-wall dimension in metres for target TE10 wave impedance.
+
+    Args:
+        z0 target TE impedance [Ohm], f frequency [Hz], er/mur medium constants.
+
+    Returns:
+        Broad-wall dimension in metres for target TE10 wave impedance.
+
+    Model:
+        Infer cutoff from target impedance and frequency, then invert cutoff.
+    """
     z0 = float(z0)
     f = float(f)
     if z0 <= 0.0 or f <= 0.0:
@@ -1076,10 +1312,6 @@ def rectwg_te10_a_for_z0(z0: float, f: float, er: float = 1.0, mur: float = 1.0)
     return rectwg_a_for_fc(fc, er=er, mur=mur, m=1)
 
 
-# Coupled microstrip even/odd modal impedances (Kirschning/Jansen).
-# Args: W line width [m], S edge spacing [m], th substrate height [m], er relative permittivity, t thickness [m], f optional frequency [Hz].
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def coupled_microstrip_z0_even_odd(
     W: float,
     S: float,
@@ -1088,7 +1320,19 @@ def coupled_microstrip_z0_even_odd(
     t: float = 0.0,
     f: float | None = None,
 ):
-    """Kirschning/Jansen coupled microstrip model with optional frequency dispersion."""
+    """Return (even-mode, odd-mode) coupled-microstrip impedances in ohms.
+
+    Args:
+        W line width [m], S edge spacing [m], th substrate height [m], er relative
+        permittivity, t thickness [m], f optional frequency [Hz].
+
+    Returns:
+        Return (even-mode, odd-mode) coupled-microstrip impedances in ohms.
+
+    Model:
+        Kirschning/Jansen empirical modal filling and coupling; optional frequency
+        dispersion.
+    """
     h = float(th)
     w = float(W)
     s = float(S)
@@ -1356,10 +1600,6 @@ def coupled_microstrip_z0_even_odd(
     return float(z_even), float(z_odd)
 
 
-# Differential CPW/DCPWG placeholder: no qualified coupled model yet.
-# Args: W width [m], S_ground trace-to-ground slot [m], S_pair pair gap [m], th substrate height [m], er relative permittivity, t thickness [m], has_metal_backside model flag, f optional frequency [Hz].
-# Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
-# Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
 def differential_cpw_zdiff_zcm(
     W: float,
     S_ground: float,
@@ -1370,7 +1610,20 @@ def differential_cpw_zdiff_zcm(
     has_metal_backside: bool = False,
     f: float | None = None,
 ):
-    """Reject unqualified coupled CPW estimates instead of reporting false modes."""
+    """Reject unqualified differential CPW and grounded-CPW estimates.
+
+    Args:
+        W width [m], S_ground trace-to-ground slot [m], S_pair pair gap [m], th
+        substrate height [m], er relative permittivity, t thickness [m],
+        has_metal_backside model flag, f optional frequency [Hz].
+
+    Raises:
+        NotImplementedError: No validated coupled CPW or grounded-CPW model.
+
+    Model:
+        The former capacitance-sum shortcut had an incorrect common-mode limit; no
+        validated coupled solver is implemented.
+    """
     raise NotImplementedError(
         "Differential CPW/DCPWG modal impedance needs a coupled conformal or field solver; "
         "the former capacitance-sum approximation has an incorrect common-mode limit."
@@ -1381,10 +1634,6 @@ class _MicrostripAPI:
     def __init__(self, pcb):
         self._pcb = pcb
 
-    # Solve microstrip characteristic impedance on a stackup pair.
-    # Args: w width [unit], layer/ground_layer indices, f0 frequency [Hz], er override dielectric, t thickness [unit].
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def z0(
         self,
         w: float,
@@ -1394,6 +1643,15 @@ class _MicrostripAPI:
         er: float | None = None,
         t: float = 0.0,
     ):
+        """Solve microstrip characteristic impedance on a stackup pair.
+
+        Args:
+            w width [unit], layer/ground_layer indices, f0 frequency [Hz], er override
+            dielectric, t thickness [unit].
+
+        Returns:
+            Single-ended impedance in ohms; PCBCalculator.z0 instead returns inverse width in stackup units.
+        """
         h = self._pcb.layer_distance(layer, ground_layer)
         ee = self._pcb.effective_er(layer, ground_layer, f0, er=er)
         return float(
@@ -1402,10 +1660,6 @@ class _MicrostripAPI:
             )
         )
 
-    # Solve microstrip effective permittivity on a stackup pair.
-    # Args: w width [unit], layer/ground_layer indices, f0 frequency [Hz], er override dielectric, t thickness [unit].
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def eeff(
         self,
         w: float,
@@ -1415,6 +1669,15 @@ class _MicrostripAPI:
         er: float | None = None,
         t: float = 0.0,
     ):
+        """Solve microstrip effective permittivity on a stackup pair.
+
+        Args:
+            w width [unit], layer/ground_layer indices, f0 frequency [Hz], er override
+            dielectric, t thickness [unit].
+
+        Returns:
+            Dimensionless effective relative permittivity.
+        """
         h = self._pcb.layer_distance(layer, ground_layer)
         ee = self._pcb.effective_er(layer, ground_layer, f0, er=er)
         return float(
@@ -1423,10 +1686,6 @@ class _MicrostripAPI:
             )
         )
 
-    # Inverse microstrip width from target impedance.
-    # Args: Z0 target impedance, layer/ground_layer indices, f0 frequency [Hz], er override, t thickness [unit], w_min/w_max search bounds [unit], n sample count.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def w_for_z0(
         self,
         Z0: float,
@@ -1440,6 +1699,16 @@ class _MicrostripAPI:
         n: int = 401,
         incl_dispersion: bool = True,
     ):
+        """Inverse microstrip width from target impedance.
+
+        Args:
+            Z0 target impedance, layer/ground_layer indices, f0 frequency [Hz], er
+            override, t thickness [unit], w_min/w_max search bounds [unit], n sample
+            count.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         h = self._pcb.layer_distance(layer, ground_layer)
         ee = self._pcb.effective_er(layer, ground_layer, f0, er=er)
         w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, h)
@@ -1463,10 +1732,6 @@ class _MicrostripAPI:
             )
         return float(wm / self._pcb.unit)
 
-    # Quarter-wave physical length helper for microstrip.
-    # Args: f design frequency [Hz], layer/ground_layer indices, f0 material/model frequency [Hz], w optional fixed width [unit], Z0 target impedance, t thickness [unit].
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def quarter_wave(
         self,
         f: float,
@@ -1477,6 +1742,16 @@ class _MicrostripAPI:
         Z0: float = 50.0,
         t: float = 0.0,
     ):
+        """Quarter-wave physical length helper for microstrip.
+
+        Args:
+            f design frequency [Hz], layer/ground_layer indices, f0 material/model
+            frequency [Hz], w optional fixed width [unit], Z0 target impedance, t
+            thickness [unit].
+
+        Returns:
+            Physical quarter-wave length in stackup units.
+        """
         if f0 is None:
             f0 = f
         if w is None:
@@ -1489,10 +1764,6 @@ class _StriplineAPI:
     def __init__(self, pcb):
         self._pcb = pcb
 
-    # Solve centered stripline impedance between two ground layers.
-    # Args: w width [unit], gnd_top/gnd_bot indices, f0 frequency [Hz], er override dielectric, t thickness [unit].
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def z0(
         self,
         w: float,
@@ -1502,14 +1773,19 @@ class _StriplineAPI:
         er: float | None = None,
         t: float = 0.0,
     ):
+        """Solve centered stripline impedance between two ground layers.
+
+        Args:
+            w width [unit], gnd_top/gnd_bot indices, f0 frequency [Hz], er override
+            dielectric, t thickness [unit].
+
+        Returns:
+            Single-ended impedance in ohms; PCBCalculator.z0 instead returns inverse width in stackup units.
+        """
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
         return float(stripline_z0(w * self._pcb.unit, b, ee, t=t * self._pcb.unit))
 
-    # Inverse stripline width from target impedance.
-    # Args: Z0 target impedance, gnd_top/gnd_bot indices, f0 frequency [Hz], er override, t thickness [unit], w_min/w_max bounds [unit], n sample count.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def w_for_z0(
         self,
         Z0: float,
@@ -1522,6 +1798,15 @@ class _StriplineAPI:
         w_max: float | None = None,
         n: int = 401,
     ):
+        """Inverse stripline width from target impedance.
+
+        Args:
+            Z0 target impedance, gnd_top/gnd_bot indices, f0 frequency [Hz], er override,
+            t thickness [unit], w_min/w_max bounds [unit], n sample count.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
         w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, b)
@@ -1539,10 +1824,6 @@ class _EdgeCoupledStriplineAPI:
     def __init__(self, pcb):
         self._pcb = pcb
 
-    # Edge-coupled stripline odd-mode impedance.
-    # Args: w width [unit], s edge spacing [unit], gnd_top/gnd_bot indices, f0 frequency [Hz], er override dielectric.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def zodd(
         self,
         w: float,
@@ -1552,16 +1833,21 @@ class _EdgeCoupledStriplineAPI:
         f0: float = 1e9,
         er: float | None = None,
     ):
+        """Edge-coupled stripline odd-mode impedance.
+
+        Args:
+            w width [unit], s edge spacing [unit], gnd_top/gnd_bot indices, f0 frequency
+            [Hz], er override dielectric.
+
+        Returns:
+            Odd-mode impedance in ohms.
+        """
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
         return float(
             coupled_stripline_zodd(w * self._pcb.unit, s * self._pcb.unit, b, ee)
         )
 
-    # Edge-coupled stripline differential impedance.
-    # Args: w width [unit], s edge spacing [unit], gnd_top/gnd_bot indices, f0 frequency [Hz], er override dielectric.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def zdiff(
         self,
         w: float,
@@ -1571,16 +1857,21 @@ class _EdgeCoupledStriplineAPI:
         f0: float = 1e9,
         er: float | None = None,
     ):
+        """Edge-coupled stripline differential impedance.
+
+        Args:
+            w width [unit], s edge spacing [unit], gnd_top/gnd_bot indices, f0 frequency
+            [Hz], er override dielectric.
+
+        Returns:
+            Differential impedance in ohms.
+        """
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
         return float(
             coupled_stripline_zdiff(w * self._pcb.unit, s * self._pcb.unit, b, ee)
         )
 
-    # Inverse edge-coupled stripline width from target differential impedance.
-    # Args: Zdiff target differential impedance, s fixed spacing [unit], gnd_top/gnd_bot indices, f0 frequency [Hz], er override, w_min/w_max bounds [unit], n sample count.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def w_for_zdiff(
         self,
         Zdiff: float,
@@ -1593,6 +1884,16 @@ class _EdgeCoupledStriplineAPI:
         w_max: float | None = None,
         n: int = 501,
     ):
+        """Inverse edge-coupled stripline width from target differential impedance.
+
+        Args:
+            Zdiff target differential impedance, s fixed spacing [unit], gnd_top/gnd_bot
+            indices, f0 frequency [Hz], er override, w_min/w_max bounds [unit], n sample
+            count.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
         w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, b)
@@ -1605,10 +1906,6 @@ class _EdgeCoupledStriplineAPI:
         )
         return float(wm / self._pcb.unit)
 
-    # Inverse edge-coupled stripline spacing from target differential impedance.
-    # Args: Zdiff target differential impedance, w fixed width [unit], gnd_top/gnd_bot indices, f0 frequency [Hz], er override, s_min/s_max bounds [unit], n sample count.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def s_for_zdiff(
         self,
         Zdiff: float,
@@ -1621,6 +1918,16 @@ class _EdgeCoupledStriplineAPI:
         s_max: float | None = None,
         n: int = 501,
     ):
+        """Inverse edge-coupled stripline spacing from target differential impedance.
+
+        Args:
+            Zdiff target differential impedance, w fixed width [unit], gnd_top/gnd_bot
+            indices, f0 frequency [Hz], er override, s_min/s_max bounds [unit], n sample
+            count.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
         s_min, s_max = _inverse_bounds_m(s_min, s_max, self._pcb.unit, b)
@@ -1638,10 +1945,6 @@ class _BroadsideCoupledStriplineAPI:
     def __init__(self, pcb):
         self._pcb = pcb
 
-    # Broadside-coupled stripline differential/common-mode impedances.
-    # Args: w strip width [unit], g broadside spacing [unit], gnd_top/gnd_bot indices, f0 frequency [Hz], er override dielectric.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def zdiff_zcm(
         self,
         w: float,
@@ -1651,6 +1954,15 @@ class _BroadsideCoupledStriplineAPI:
         f0: float = 1e9,
         er: float | None = None,
     ):
+        """Broadside-coupled stripline differential/common-mode impedances.
+
+        Args:
+            w strip width [unit], g broadside spacing [unit], gnd_top/gnd_bot indices, f0
+            frequency [Hz], er override dielectric.
+
+        Returns:
+            (differential impedance, common-mode impedance) in ohms.
+        """
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
         zd, zc = broadside_stripline_zdiff_zcm(
@@ -1658,10 +1970,6 @@ class _BroadsideCoupledStriplineAPI:
         )
         return float(zd), float(zc)
 
-    # Inverse broadside stripline width from target differential impedance.
-    # Args: Zdiff target differential impedance, g fixed broadside spacing [unit], gnd_top/gnd_bot indices, f0 frequency [Hz], er override, w_min/w_max bounds [unit], n sample count.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def w_for_zdiff(
         self,
         Zdiff: float,
@@ -1674,6 +1982,16 @@ class _BroadsideCoupledStriplineAPI:
         w_max: float | None = None,
         n: int = 501,
     ):
+        """Inverse broadside stripline width from target differential impedance.
+
+        Args:
+            Zdiff target differential impedance, g fixed broadside spacing [unit],
+            gnd_top/gnd_bot indices, f0 frequency [Hz], er override, w_min/w_max bounds
+            [unit], n sample count.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
         w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, b)
@@ -1686,10 +2004,6 @@ class _BroadsideCoupledStriplineAPI:
         )
         return float(wm / self._pcb.unit)
 
-    # Inverse broadside stripline spacing from target differential impedance.
-    # Args: Zdiff target differential impedance, w fixed width [unit], gnd_top/gnd_bot indices, f0 frequency [Hz], er override, g_min/g_max bounds [unit], n sample count.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def g_for_zdiff(
         self,
         Zdiff: float,
@@ -1702,6 +2016,16 @@ class _BroadsideCoupledStriplineAPI:
         g_max: float | None = None,
         n: int = 501,
     ):
+        """Inverse broadside stripline spacing from target differential impedance.
+
+        Args:
+            Zdiff target differential impedance, w fixed width [unit], gnd_top/gnd_bot
+            indices, f0 frequency [Hz], er override, g_min/g_max bounds [unit], n sample
+            count.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
         g0, g1 = _inverse_bounds_m(g_min, g_max, self._pcb.unit, b)
@@ -1747,10 +2071,6 @@ class _CPWAPI:
         self._pcb = pcb
         self._metal = bool(has_metal_backside)
 
-    # CPW/GCPW characteristic impedance from stackup geometry.
-    # Args: w center width [unit], s slot [unit], layer/ref_layer indices, f0 frequency [Hz], er override dielectric, t thickness [unit].
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def z0(
         self,
         w: float,
@@ -1761,6 +2081,15 @@ class _CPWAPI:
         er: float | None = None,
         t: float = 0.0,
     ):
+        """CPW/GCPW characteristic impedance from stackup geometry.
+
+        Args:
+            w center width [unit], s slot [unit], layer/ref_layer indices, f0 frequency
+            [Hz], er override dielectric, t thickness [unit].
+
+        Returns:
+            Single-ended impedance in ohms; PCBCalculator.z0 instead returns inverse width in stackup units.
+        """
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
         return float(
@@ -1775,10 +2104,6 @@ class _CPWAPI:
             )
         )
 
-    # CPW/GCPW effective permittivity from stackup geometry.
-    # Args: w center width [unit], s slot [unit], layer/ref_layer indices, f0 frequency [Hz], er override dielectric, t thickness [unit].
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def eeff(
         self,
         w: float,
@@ -1789,6 +2114,15 @@ class _CPWAPI:
         er: float | None = None,
         t: float = 0.0,
     ):
+        """CPW/GCPW effective permittivity from stackup geometry.
+
+        Args:
+            w center width [unit], s slot [unit], layer/ref_layer indices, f0 frequency
+            [Hz], er override dielectric, t thickness [unit].
+
+        Returns:
+            Dimensionless effective relative permittivity.
+        """
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
         return float(
@@ -1803,10 +2137,6 @@ class _CPWAPI:
             )
         )
 
-    # Inverse CPW/GCPW center width from target impedance.
-    # Args: Z0 target impedance, s fixed slot [unit], layer/ref_layer indices, f0 frequency [Hz], er override, t thickness [unit], w_min/w_max bounds [unit], n sample count.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def w_for_z0(
         self,
         Z0: float,
@@ -1820,6 +2150,16 @@ class _CPWAPI:
         w_max: float | None = None,
         n: int = 501,
     ):
+        """Inverse CPW/GCPW center width from target impedance.
+
+        Args:
+            Z0 target impedance, s fixed slot [unit], layer/ref_layer indices, f0
+            frequency [Hz], er override, t thickness [unit], w_min/w_max bounds [unit], n
+            sample count.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
         w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, h)
@@ -1845,10 +2185,6 @@ class _EdgeCoupledMicrostripAPI:
     def __init__(self, pcb):
         self._pcb = pcb
 
-    # Edge-coupled microstrip even/odd modal impedances.
-    # Args: w width [unit], s edge spacing [unit], layer/ground_layer indices, f0 frequency [Hz], er override dielectric, t thickness [unit].
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def even_odd(
         self,
         w: float,
@@ -1859,6 +2195,15 @@ class _EdgeCoupledMicrostripAPI:
         er: float | None = None,
         t: float = 0.0,
     ):
+        """Edge-coupled microstrip even/odd modal impedances.
+
+        Args:
+            w width [unit], s edge spacing [unit], layer/ground_layer indices, f0
+            frequency [Hz], er override dielectric, t thickness [unit].
+
+        Returns:
+            (even-mode impedance, odd-mode impedance) in ohms.
+        """
         h = self._pcb.layer_distance(layer, ground_layer)
         ee = self._pcb.effective_er(layer, ground_layer, f0, er=er)
         return coupled_microstrip_z0_even_odd(
@@ -1870,10 +2215,6 @@ class _EdgeCoupledMicrostripAPI:
             f=f0,
         )
 
-    # Edge-coupled microstrip differential/common-mode impedances.
-    # Args: w width [unit], s edge spacing [unit], layer/ground_layer indices, f0 frequency [Hz], er override dielectric, t thickness [unit].
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def zdiff_zcm(
         self,
         w: float,
@@ -1884,15 +2225,20 @@ class _EdgeCoupledMicrostripAPI:
         er: float | None = None,
         t: float = 0.0,
     ):
+        """Edge-coupled microstrip differential/common-mode impedances.
+
+        Args:
+            w width [unit], s edge spacing [unit], layer/ground_layer indices, f0
+            frequency [Hz], er override dielectric, t thickness [unit].
+
+        Returns:
+            (differential impedance, common-mode impedance) in ohms.
+        """
         ze, zo = self.even_odd(
             w, s, layer=layer, ground_layer=ground_layer, f0=f0, er=er, t=t
         )
         return float(2.0 * zo), float(0.5 * ze)
 
-    # Inverse edge-coupled microstrip width from target differential impedance.
-    # Args: Zdiff target differential impedance, s fixed spacing [unit], layer/ground_layer indices, f0 frequency [Hz], er override, t thickness [unit], w_min/w_max bounds [unit], n sample count.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def w_for_zdiff(
         self,
         Zdiff: float,
@@ -1906,6 +2252,16 @@ class _EdgeCoupledMicrostripAPI:
         w_max: float | None = None,
         n: int = 501,
     ):
+        """Inverse edge-coupled microstrip width from target differential impedance.
+
+        Args:
+            Zdiff target differential impedance, s fixed spacing [unit],
+            layer/ground_layer indices, f0 frequency [Hz], er override, t thickness
+            [unit], w_min/w_max bounds [unit], n sample count.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         h = self._pcb.layer_distance(layer, ground_layer)
         ee = self._pcb.effective_er(layer, ground_layer, f0, er=er)
         w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, h)
@@ -1922,10 +2278,6 @@ class _EdgeCoupledMicrostripAPI:
         wm = _scan_inverse(Zdiff, _zd, w_min, w_max, n)
         return float(wm / self._pcb.unit)
 
-    # Inverse edge-coupled microstrip spacing from target differential impedance.
-    # Args: Zdiff target differential impedance, w fixed width [unit], layer/ground_layer indices, f0 frequency [Hz], er override, t thickness [unit], s_min/s_max bounds [unit], n sample count.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def s_for_zdiff(
         self,
         Zdiff: float,
@@ -1939,6 +2291,16 @@ class _EdgeCoupledMicrostripAPI:
         s_max: float | None = None,
         n: int = 501,
     ):
+        """Inverse edge-coupled microstrip spacing from target differential impedance.
+
+        Args:
+            Zdiff target differential impedance, w fixed width [unit], layer/ground_layer
+            indices, f0 frequency [Hz], er override, t thickness [unit], s_min/s_max
+            bounds [unit], n sample count.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         h = self._pcb.layer_distance(layer, ground_layer)
         ee = self._pcb.effective_er(layer, ground_layer, f0, er=er)
         s_min, s_max = _inverse_bounds_m(s_min, s_max, self._pcb.unit, h)
@@ -1961,10 +2323,6 @@ class _DifferentialCPWAPI:
         self._pcb = pcb
         self._metal = bool(has_metal_backside)
 
-    # Differential CPW/DCPWG differential/common-mode impedances.
-    # Args: w width [unit], s_pair pair gap [unit], s_ground trace-to-ground slot [unit], layer/ref_layer indices, f0 frequency [Hz], er override dielectric, t thickness [unit].
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def zdiff_zcm(
         self,
         w: float,
@@ -1976,6 +2334,16 @@ class _DifferentialCPWAPI:
         er: float | None = None,
         t: float = 0.0,
     ):
+        """Differential CPW/DCPWG differential/common-mode impedances.
+
+        Args:
+            w width [unit], s_pair pair gap [unit], s_ground trace-to-ground slot [unit],
+            layer/ref_layer indices, f0 frequency [Hz], er override dielectric, t
+            thickness [unit].
+
+        Returns:
+            No value: raises NotImplementedError until a qualified coupled solver exists.
+        """
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
         zd, zc = differential_cpw_zdiff_zcm(
@@ -1990,10 +2358,6 @@ class _DifferentialCPWAPI:
         )
         return float(zd), float(zc)
 
-    # Inverse differential CPW/DCPWG width from target differential impedance.
-    # Args: Zdiff target differential impedance, s_pair fixed pair gap [unit], s_ground fixed trace-to-ground slot [unit], layer/ref_layer indices, f0 frequency [Hz], er override, t thickness [unit], w_min/w_max bounds [unit], n sample count.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def w_for_zdiff(
         self,
         Zdiff: float,
@@ -2008,6 +2372,16 @@ class _DifferentialCPWAPI:
         w_max: float | None = None,
         n: int = 501,
     ):
+        """Inverse differential CPW/DCPWG width from target differential impedance.
+
+        Args:
+            Zdiff target differential impedance, s_pair fixed pair gap [unit], s_ground
+            fixed trace-to-ground slot [unit], layer/ref_layer indices, f0 frequency [Hz],
+            er override, t thickness [unit], w_min/w_max bounds [unit], n sample count.
+
+        Returns:
+            No value: raises NotImplementedError until a qualified coupled solver exists.
+        """
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
         w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, h)
@@ -2029,10 +2403,6 @@ class _DifferentialCPWAPI:
         )
         return float(wm / self._pcb.unit)
 
-    # Inverse differential CPW/DCPWG pair spacing from target differential impedance.
-    # Args: Zdiff target differential impedance, w fixed width [unit], s_ground fixed trace-to-ground slot [unit], layer/ref_layer indices, f0 frequency [Hz], er override, t thickness [unit], s_min/s_max bounds [unit], n sample count.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def s_for_zdiff(
         self,
         Zdiff: float,
@@ -2047,6 +2417,16 @@ class _DifferentialCPWAPI:
         s_max: float | None = None,
         n: int = 501,
     ):
+        """Inverse differential CPW/DCPWG pair spacing from target differential impedance.
+
+        Args:
+            Zdiff target differential impedance, w fixed width [unit], s_ground fixed
+            trace-to-ground slot [unit], layer/ref_layer indices, f0 frequency [Hz], er
+            override, t thickness [unit], s_min/s_max bounds [unit], n sample count.
+
+        Returns:
+            No value: raises NotImplementedError until a qualified coupled solver exists.
+        """
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
         s_min, s_max = _inverse_bounds_m(s_min, s_max, self._pcb.unit, h)
@@ -2077,25 +2457,29 @@ class _CoaxAPI:
     def __init__(self, pcb):
         self._pcb = pcb
 
-    # Coax characteristic impedance wrapper in user geometry units.
-    # Args: d_inner/d_outer diameters [unit], er relative permittivity.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def z0(self, d_inner: float, d_outer: float, er: float = 1.0):
+        """Coax characteristic impedance wrapper in user geometry units.
+
+        Args:
+            d_inner/d_outer diameters [unit], er relative permittivity.
+
+        Returns:
+            Single-ended impedance in ohms; PCBCalculator.z0 instead returns inverse width in stackup units.
+        """
         return float(coax_z0(d_inner * self._pcb.unit, d_outer * self._pcb.unit, er))
 
-    # Coax inverse inner diameter from target impedance.
-    # Args: Z0 target impedance, d_outer outer diameter [unit], er relative permittivity.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def d_inner_for_z0(self, Z0: float, d_outer: float, er: float = 1.0):
+        """Coax inverse inner diameter from target impedance.
+
+        Args:
+            Z0 target impedance, d_outer outer diameter [unit], er relative permittivity.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         di = coax_d_for_z0(Z0, d_outer * self._pcb.unit, er)
         return float(di / self._pcb.unit)
 
-    # Coax TE cutoff frequency wrapper.
-    # Args: d_inner/d_outer diameters [unit], er/mur medium constants, n/m mode indices, exact exact-root flag.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def cutoff_te(
         self,
         d_inner: float,
@@ -2106,14 +2490,19 @@ class _CoaxAPI:
         m: int = 1,
         exact: bool = True,
     ):
+        """Coax TE cutoff frequency wrapper.
+
+        Args:
+            d_inner/d_outer diameters [unit], er/mur medium constants, n/m mode indices,
+            exact exact-root flag.
+
+        Returns:
+            TE-mode cutoff frequency in hertz.
+        """
         di = d_inner * self._pcb.unit
         do = d_outer * self._pcb.unit
         return float(coax_cutoff_te(di, do, er=er, mur=mur, n=n, m=m, exact=exact))
 
-    # Coax TM cutoff frequency wrapper.
-    # Args: d_inner/d_outer diameters [unit], er/mur medium constants, n/m mode indices, exact exact-root flag.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def cutoff_tm(
         self,
         d_inner: float,
@@ -2124,14 +2513,19 @@ class _CoaxAPI:
         m: int = 1,
         exact: bool = True,
     ):
+        """Coax TM cutoff frequency wrapper.
+
+        Args:
+            d_inner/d_outer diameters [unit], er/mur medium constants, n/m mode indices,
+            exact exact-root flag.
+
+        Returns:
+            TM-mode cutoff frequency in hertz.
+        """
         di = d_inner * self._pcb.unit
         do = d_outer * self._pcb.unit
         return float(coax_cutoff_tm(di, do, er=er, mur=mur, n=n, m=m, exact=exact))
 
-    # Coax default cutoff pair (TE11, TM01).
-    # Args: d_inner/d_outer diameters [unit], er/mur medium constants, exact exact-root flag.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def cutoffs(
         self,
         d_inner: float,
@@ -2140,6 +2534,15 @@ class _CoaxAPI:
         mur: float = 1.0,
         exact: bool = True,
     ):
+        """Coax default cutoff pair (TE11, TM01).
+
+        Args:
+            d_inner/d_outer diameters [unit], er/mur medium constants, exact exact-root
+            flag.
+
+        Returns:
+            Dictionary of higher-mode cutoff frequencies in hertz.
+        """
         di = d_inner * self._pcb.unit
         do = d_outer * self._pcb.unit
         return (
@@ -2152,10 +2555,6 @@ class _TwistedPairAPI:
     def __init__(self, pcb):
         self._pcb = pcb
 
-    # Twisted-pair effective permittivity wrapper.
-    # Args: d_center center spacing [unit], d_wire wire diameter [unit], er/er1 dielectric terms, twists_per_len turns per unit length, ptfe branch flag.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def eeff(
         self,
         d_center: float,
@@ -2165,6 +2564,15 @@ class _TwistedPairAPI:
         twists_per_len: float = 0.0,
         ptfe: bool = False,
     ):
+        """Twisted-pair effective permittivity wrapper.
+
+        Args:
+            d_center center spacing [unit], d_wire wire diameter [unit], er/er1 dielectric
+            terms, twists_per_len turns per unit length, ptfe branch flag.
+
+        Returns:
+            Dimensionless effective relative permittivity.
+        """
         return float(
             twisted_pair_eeff(
                 d_center * self._pcb.unit,
@@ -2176,10 +2584,6 @@ class _TwistedPairAPI:
             )
         )
 
-    # Twisted-pair impedance wrapper.
-    # Args: d_center center spacing [unit], d_wire wire diameter [unit], er/er1 dielectric terms, twists_per_len turns per unit length, ptfe branch flag.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def z0(
         self,
         d_center: float,
@@ -2189,6 +2593,15 @@ class _TwistedPairAPI:
         twists_per_len: float = 0.0,
         ptfe: bool = False,
     ):
+        """Twisted-pair impedance wrapper.
+
+        Args:
+            d_center center spacing [unit], d_wire wire diameter [unit], er/er1 dielectric
+            terms, twists_per_len turns per unit length, ptfe branch flag.
+
+        Returns:
+            Single-ended impedance in ohms; PCBCalculator.z0 instead returns inverse width in stackup units.
+        """
         return float(
             twisted_pair_z0(
                 d_center * self._pcb.unit,
@@ -2200,10 +2613,6 @@ class _TwistedPairAPI:
             )
         )
 
-    # Twisted-pair inverse center spacing from target impedance.
-    # Args: z0 target impedance, d_wire wire diameter [unit], er/er1 dielectric terms, twists_per_len turns per unit length, ptfe branch flag.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def d_center_for_z0(
         self,
         z0: float,
@@ -2213,6 +2622,15 @@ class _TwistedPairAPI:
         twists_per_len: float = 0.0,
         ptfe: bool = False,
     ):
+        """Twisted-pair inverse center spacing from target impedance.
+
+        Args:
+            z0 target impedance, d_wire wire diameter [unit], er/er1 dielectric terms,
+            twists_per_len turns per unit length, ptfe branch flag.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         dc = twisted_pair_d_center_for_z0(
             z0=float(z0),
             d_wire=d_wire * self._pcb.unit,
@@ -2223,10 +2641,6 @@ class _TwistedPairAPI:
         )
         return float(dc / self._pcb.unit)
 
-    # Twisted-pair inverse wire diameter from target impedance.
-    # Args: z0 target impedance, d_center center spacing [unit], er/er1 dielectric terms, twists_per_len turns per unit length, ptfe branch flag.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def d_wire_for_z0(
         self,
         z0: float,
@@ -2236,6 +2650,15 @@ class _TwistedPairAPI:
         twists_per_len: float = 0.0,
         ptfe: bool = False,
     ):
+        """Twisted-pair inverse wire diameter from target impedance.
+
+        Args:
+            z0 target impedance, d_center center spacing [unit], er/er1 dielectric terms,
+            twists_per_len turns per unit length, ptfe branch flag.
+
+        Returns:
+            Solved geometry in stackup units.
+        """
         dw = twisted_pair_d_wire_for_z0(
             z0=float(z0),
             d_center=d_center * self._pcb.unit,
@@ -2251,10 +2674,6 @@ class _RectangularWaveguideAPI:
     def __init__(self, pcb):
         self._pcb = pcb
 
-    # Waveguide cutoff frequency wrapper.
-    # Args: a/b waveguide dimensions [unit], m/n mode indices, er/mur medium constants.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def fc(
         self,
         a: float,
@@ -2264,14 +2683,18 @@ class _RectangularWaveguideAPI:
         er: float = 1.0,
         mur: float = 1.0,
     ):
+        """Waveguide cutoff frequency wrapper.
+
+        Args:
+            a/b waveguide dimensions [unit], m/n mode indices, er/mur medium constants.
+
+        Returns:
+            Mode cutoff frequency in hertz.
+        """
         return float(
             rectwg_fc(a * self._pcb.unit, b * self._pcb.unit, m=m, n=n, er=er, mur=mur)
         )
 
-    # Waveguide propagation constant wrapper.
-    # Args: f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium constants.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def beta(
         self,
         f: float,
@@ -2282,16 +2705,21 @@ class _RectangularWaveguideAPI:
         er: float = 1.0,
         mur: float = 1.0,
     ):
+        """Waveguide propagation constant wrapper.
+
+        Args:
+            f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium
+            constants.
+
+        Returns:
+            Propagation constant in radians per metre.
+        """
         return float(
             rectwg_beta(
                 f, a * self._pcb.unit, b * self._pcb.unit, m=m, n=n, er=er, mur=mur
             )
         )
 
-    # Waveguide guided wavelength wrapper.
-    # Args: f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium constants.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def lambda_g(
         self,
         f: float,
@@ -2302,6 +2730,15 @@ class _RectangularWaveguideAPI:
         er: float = 1.0,
         mur: float = 1.0,
     ):
+        """Waveguide guided wavelength wrapper.
+
+        Args:
+            f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium
+            constants.
+
+        Returns:
+            Guided wavelength in stackup units.
+        """
         lg = rectwg_lambda_g(
             f, a * self._pcb.unit, b * self._pcb.unit, m=m, n=n, er=er, mur=mur
         )
@@ -2309,10 +2746,6 @@ class _RectangularWaveguideAPI:
             return np.inf
         return float(lg / self._pcb.unit)
 
-    # Waveguide TE impedance wrapper.
-    # Args: f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium constants.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def z_te(
         self,
         f: float,
@@ -2323,16 +2756,21 @@ class _RectangularWaveguideAPI:
         er: float = 1.0,
         mur: float = 1.0,
     ):
+        """Waveguide TE impedance wrapper.
+
+        Args:
+            f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium
+            constants.
+
+        Returns:
+            TE-mode wave impedance in ohms.
+        """
         return float(
             rectwg_z_te(
                 f, a * self._pcb.unit, b * self._pcb.unit, m=m, n=n, er=er, mur=mur
             )
         )
 
-    # Waveguide TM impedance wrapper.
-    # Args: f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium constants.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def z_tm(
         self,
         f: float,
@@ -2343,30 +2781,43 @@ class _RectangularWaveguideAPI:
         er: float = 1.0,
         mur: float = 1.0,
     ):
+        """Waveguide TM impedance wrapper.
+
+        Args:
+            f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium
+            constants.
+
+        Returns:
+            TM-mode wave impedance in ohms.
+        """
         return float(
             rectwg_z_tm(
                 f, a * self._pcb.unit, b * self._pcb.unit, m=m, n=n, er=er, mur=mur
             )
         )
 
-    # Inverse broad wall size from cutoff.
-    # Args: fc cutoff frequency [Hz], er/mur medium constants, m mode index.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def a_for_fc(self, fc: float, er: float = 1.0, mur: float = 1.0, m: int = 1):
+        """Inverse broad wall size from cutoff.
+
+        Args:
+            fc cutoff frequency [Hz], er/mur medium constants, m mode index.
+
+        Returns:
+            Geometry in stackup units for inverse solves; otherwise the named physical quantity.
+        """
         return float(rectwg_a_for_fc(fc, er=er, mur=mur, m=m) / self._pcb.unit)
 
-    # Inverse TE10 broad wall size from TE impedance.
-    # Args: z0 target TE impedance, f frequency [Hz], er/mur medium constants.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def a_for_z_te10(self, z0: float, f: float, er: float = 1.0, mur: float = 1.0):
+        """Inverse TE10 broad wall size from TE impedance.
+
+        Args:
+            z0 target TE impedance, f frequency [Hz], er/mur medium constants.
+
+        Returns:
+            Geometry in stackup units for inverse solves; otherwise the named physical quantity.
+        """
         return float(rectwg_te10_a_for_z0(z0, f, er=er, mur=mur) / self._pcb.unit)
 
-    # Physical length for desired phase angle in selected mode.
-    # Args: angle_rad target phase angle [rad], f frequency [Hz], a/b dimensions [unit], m/n mode indices, er/mur medium constants.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def length_for_angle(
         self,
         angle_rad: float,
@@ -2378,6 +2829,15 @@ class _RectangularWaveguideAPI:
         er: float = 1.0,
         mur: float = 1.0,
     ):
+        """Physical length for desired phase angle in selected mode.
+
+        Args:
+            angle_rad target phase angle [rad], f frequency [Hz], a/b dimensions [unit],
+            m/n mode indices, er/mur medium constants.
+
+        Returns:
+            Physical length in stackup units.
+        """
         beta = rectwg_beta(
             f, a * self._pcb.unit, b * self._pcb.unit, m=m, n=n, er=er, mur=mur
         )
@@ -2385,11 +2845,15 @@ class _RectangularWaveguideAPI:
             return np.inf
         return float((float(angle_rad) / beta) / self._pcb.unit)
 
-    # Convenience TE10 report dict.
-    # Args: f frequency [Hz], a/b dimensions [unit], er/mur medium constants.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def te10(self, f: float, a: float, b: float, er: float = 1.0, mur: float = 1.0):
+        """Convenience TE10 report dict.
+
+        Args:
+            f frequency [Hz], a/b dimensions [unit], er/mur medium constants.
+
+        Returns:
+            Dictionary with TE10 cutoff, impedance, beta, wavelength and propagation flag.
+        """
         fc10 = self.fc(a, b, m=1, n=0, er=er, mur=mur)
         z = self.z_te(f, a, b, m=1, n=0, er=er, mur=mur)
         beta = self.beta(f, a, b, m=1, n=0, er=er, mur=mur)
@@ -2404,11 +2868,16 @@ class _RectangularWaveguideAPI:
 
 
 class PCBCalculator:
-    # Build calculator from stackup geometry and dielectric list.
-    # Args: layers z-coordinates [unit], materials dielectric objects per layer interval, unit conversion to meters.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def __init__(self, layers: np.ndarray, materials: list[Material], unit: float):
+        """Initialize the stackup-bound calculator namespace.
+
+        Args:
+            layers z-coordinates [unit], materials dielectric objects per layer interval,
+            unit conversion to meters.
+
+        Returns:
+            None.
+        """
         self.layers: np.ndarray = np.asarray(layers, dtype=float)
         self.mat: list[Material] = materials
         self.unit: float = float(unit)
@@ -2433,10 +2902,6 @@ class PCBCalculator:
         self.coupled_microstrip = self.edge_coupled_microstrip
         self.coupled_stripline = self.edge_coupled_stripline
 
-    # Backward-compatible alias for microstrip inverse width solve.
-    # Args: Z0 target impedance, layer/ground_layer indices, f0 frequency [Hz], er override dielectric.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def z0(
         self,
         Z0: float,
@@ -2446,6 +2911,15 @@ class PCBCalculator:
         er: float | None = None,
         include_dispersion: bool = True,
     ) -> float:
+        """Backward-compatible alias for microstrip inverse width solve.
+
+        Args:
+            Z0 target impedance, layer/ground_layer indices, f0 frequency [Hz], er
+            override dielectric.
+
+        Returns:
+            Solved microstrip width in stackup units (legacy alias).
+        """
         return self.microstrip.w_for_z0(
             Z0,
             layer=layer,
@@ -2455,11 +2929,15 @@ class PCBCalculator:
             incl_dispersion=include_dispersion,
         )
 
-    # Normalize positive/negative layer index to absolute index.
-    # Args: layer signed layer index.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def layer_index(self, layer: int) -> int:
+        """Normalize positive/negative layer index to absolute index.
+
+        Args:
+            layer signed layer index.
+
+        Returns:
+            Absolute zero-based layer index.
+        """
         idx = int(layer)
         if idx < 0:
             idx += len(self.layers)
@@ -2467,27 +2945,40 @@ class PCBCalculator:
             raise IndexError(f"Layer index out of range: {layer}")
         return idx
 
-    # Return layer z-coordinate in stackup units.
-    # Args: layer signed layer index.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def z(self, layer: int) -> float:
+        """Return layer z-coordinate in stackup units.
+
+        Args:
+            layer signed layer index.
+
+        Returns:
+            Layer z-coordinate in stackup units.
+        """
         return float(self.layers[self.layer_index(layer)])
 
-    # Physical distance between two layers.
-    # Args: a/b signed layer indices.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def layer_distance(self, a: int, b: int) -> float:
+        """Physical distance between two layers.
+
+        Args:
+            a/b signed layer indices.
+
+        Returns:
+            Physical separation in metres.
+        """
         return abs(self.z(a) - self.z(b)) * self.unit
 
-    # Effective dielectric constant between two layers.
-    # Args: layer/ground_layer signed indices, f0 frequency [Hz], er optional direct override.
-    # Returns: Numeric result for the requested quantity; may be a tuple or dict for grouped outputs.
-    # Notes: Geometry args are in stackup units and are converted internally using self._pcb.unit.
     def effective_er(
         self, layer: int, ground_layer: int, f0: float, er: float | None = None
     ) -> float:
+        """Effective dielectric constant between two layers.
+
+        Args:
+            layer/ground_layer signed indices, f0 frequency [Hz], er optional direct
+            override.
+
+        Returns:
+            Dimensionless relative permittivity, or ValueError for mixed/unresolved dielectrics.
+        """
         if er is not None:
             value = float(er)
             if not np.isfinite(value) or value < 1.0:
