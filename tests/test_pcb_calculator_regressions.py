@@ -5,6 +5,7 @@ lightweight stub avoids importing EMerge's optional meshing/runtime stack.
 """
 
 import importlib.util
+import itertools
 import math
 import sys
 import types
@@ -80,3 +81,59 @@ def test_missing_or_mixed_dielectric_is_not_treated_as_homogeneous(calc):
     )
     with pytest.raises(ValueError, match="Mixed dielectric"):
         mixed.microstrip.z0(0.3)
+
+
+def test_air_dispersion_keeps_positive_static_modal_limits(calc):
+    single = calc.microstrip_z0(0.2e-3, 0.2e-3, 1.0)
+    assert calc.microstrip_z0_dispersion(0.2e-3, 0.2e-3, 1.0, 1e9) == pytest.approx(single)
+    static = calc.coupled_microstrip_z0_even_odd(0.2e-3, 0.2e-3, 0.2e-3, 1.0)
+    dynamic = calc.coupled_microstrip_z0_even_odd(0.2e-3, 0.2e-3, 0.2e-3, 1.0, f=1e9)
+    assert dynamic == pytest.approx(static)
+    assert all(value > 0 for value in dynamic)
+
+
+def test_broadside_matches_independent_cohn_reference(calc):
+    zdiff, zcm = calc.broadside_stripline_zdiff_zcm(0.594, 0.234, 1.0, 2.2)
+    assert float(zdiff) == pytest.approx(59.3999382784, rel=1e-8)
+    assert float(zcm) == pytest.approx(44.0062304122, rel=1e-8)
+
+
+def test_wide_stripline_has_no_elliptic_clipping_floor(calc):
+    assert calc.stripline_z0(20.0, 1.0, 4.0) == pytest.approx(2.3037358463, rel=1e-8)
+    assert calc.stripline_z0(100.0, 1.0, 4.0) == pytest.approx(0.4688440185, rel=1e-8)
+
+
+def test_thick_microstrip_eeff_includes_air_width_factor(calc):
+    assert calc.microstrip_eeff(0.2e-3, 0.2e-3, 4.2, 35e-6) == pytest.approx(
+        2.8942522649, rel=1e-8
+    )
+
+
+def test_unqualified_differential_cpw_fails_closed(calc):
+    with pytest.raises(NotImplementedError, match="coupled conformal or field solver"):
+        calc.differential_cpw_zdiff_zcm(1e-3, 1e-3, 0.1e-3, 1e-3, 4.2)
+
+
+def test_supported_microstrip_grid_has_finite_positive_impedances(calc):
+    h = 0.2e-3
+    for width_ratio, er, ghz in itertools.product(
+        (0.1, 0.2, 0.5, 1, 2, 5, 10),
+        (1, 1.01, 2.2, 4.2, 10, 18),
+        (0.1, 1, 10, 50, 100),
+    ):
+        z = float(calc.microstrip_z0_dispersion(width_ratio * h, h, er, ghz * 1e9))
+        assert math.isfinite(z) and 0 < z < 1000
+
+
+def test_coupled_microstrip_grid_has_finite_positive_modes(calc):
+    h = 0.2e-3
+    for width_ratio, gap_ratio, er, ghz in itertools.product(
+        (0.1, 0.5, 1, 2, 10),
+        (0.1, 0.5, 1, 2, 10),
+        (1, 1.01, 2.2, 4.2, 10, 18),
+        (0.1, 1, 10, 50),
+    ):
+        even, odd = calc.coupled_microstrip_z0_even_odd(
+            width_ratio * h, gap_ratio * h, h, er, f=ghz * 1e9
+        )
+        assert all(math.isfinite(z) and 0 < z < 1000 for z in (even, odd))

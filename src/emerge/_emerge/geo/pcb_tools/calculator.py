@@ -74,7 +74,7 @@
 #
 # Last Cleanup: 2025-01-01
 import numpy as np
-from scipy.special import jv, yv
+from scipy.special import ellipk, ellipkm1, jv, yv
 from emsutil import Material
 
 n0 = 376.73031366857
@@ -103,9 +103,12 @@ def _ellipk_agm(k):
 
 
 def _ellip_ratio(k):
-    k = np.clip(_asf(k), 0.0, 1.0 - 1e-15)
-    kp = np.sqrt(1.0 - k * k)
-    return _ellipk_agm(k) / _ellipk_agm(kp)
+    k = _asf(k)
+    if np.any(~np.isfinite(k)) or np.any(k < 0.0) or np.any(k > 1.0):
+        raise ValueError("Elliptic modulus must lie in [0, 1]")
+    m = k * k
+    # ellipkm1(m) evaluates K(1-m) without cancellation when m is tiny.
+    return ellipk(m) / ellipkm1(m)
 
 
 def _coth(x):
@@ -274,8 +277,7 @@ def microstrip_z0(W: float, th: float, er: float, t: float = 0.0):
         dur = 0.5 * du1 * (1.0 + _sech(np.sqrt(np.maximum(er - 1.0, 0.0))))
         u = u + dur
 
-    eeff = (er + 1.0) / 2.0 + (er - 1.0) / 2.0 * (1.0 / np.sqrt(1.0 + 12.0 / u))
-    eeff = eeff + np.where(u < 1.0, 0.04 * (1.0 - u) ** 2 * (er - 1.0) / 2.0, 0.0)
+    eeff = microstrip_eeff(W, h, er, t=t)
 
     return np.where(
         u <= 1.0,
@@ -293,16 +295,22 @@ def microstrip_eeff(W: float, th: float, er: float, t: float = 0.0):
     h = float(th)
     u = np.maximum(W / h, 1e-12)
 
+    thickness_factor = 1.0
     if t is not None and t > 0.0:
         thn = float(t) / h
         x = np.sqrt(6.517 * u)
         du1 = (thn / PI) * np.log(1.0 + (4.0 * np.e) / (thn * _coth(x) ** 2))
         dur = 0.5 * du1 * (1.0 + _sech(np.sqrt(np.maximum(er - 1.0, 0.0))))
+        # Hammerstad/Jensen uses different width corrections in air and in
+        # dielectric; their air-impedance ratio also corrects epsilon_eff.
+        z_air_1 = microstrip_z0((u + du1) * h, h, 1.0)
+        z_air_r = microstrip_z0((u + dur) * h, h, 1.0)
+        thickness_factor = (z_air_1 / z_air_r) ** 2
         u = u + dur
 
     eeff = (er + 1.0) / 2.0 + (er - 1.0) / 2.0 * (1.0 / np.sqrt(1.0 + 12.0 / u))
     eeff = eeff + np.where(u < 1.0, 0.04 * (1.0 - u) ** 2 * (er - 1.0) / 2.0, 0.0)
-    return eeff
+    return eeff * thickness_factor
 
 
 # Microstrip effective permittivity with frequency dispersion.
@@ -386,7 +394,10 @@ def microstrip_z0_dispersion(W: float, th: float, er: float, f: float, t: float 
     r17 = r7 * (
         1.0 - 1.1241 * (r12 / r16) * np.exp(-0.026 * np.power(fn, 1.15656) - r15)
     )
-    d = np.power(np.maximum(r13 / np.maximum(r14, 1e-30), 1e-30), r17)
+    ratio = r13 / r14
+    if np.any(~np.isfinite(ratio)) or np.any(ratio <= 0.0):
+        raise ValueError("Microstrip dispersion ratio is not physical for this geometry")
+    d = np.power(ratio, r17)
     return z0_0 * d
 
 
@@ -471,7 +482,7 @@ def broadside_stripline_zdiff_zcm(W: float, G: float, b: float, er: float):
         r = np.sqrt(num / den)
         r = float(np.clip(r, 1e-15, 1.0 - 1e-15))
         rk = float(np.clip(r / max(k, 1e-15), 1e-15, 1.0 - 1e-15))
-        return (2.0 / PI) * np.arctanh(r) - s * np.arctanh(rk)
+        return (2.0 / PI) * (np.arctanh(r) - s * np.arctanh(rk))
 
     def _k_from_w(wratio: float) -> float:
         if wratio <= 0.0:
@@ -485,10 +496,7 @@ def broadside_stripline_zdiff_zcm(W: float, G: float, b: float, er: float):
                 "Broadside k-solve failed due to non-finite endpoint value."
             )
         if flo > 0.0 or fhi < 0.0:
-            ks = np.linspace(lo, hi, 2001)
-            fs = np.asarray([_w_from_k(float(kk)) - wratio for kk in ks], dtype=float)
-            i = int(np.argmin(np.abs(fs)))
-            return float(ks[i])
+            raise ValueError("Broadside width has no bracketed modal solution")
         for _ in range(80):
             mid = 0.5 * (lo + hi)
             fm = _w_from_k(mid) - wratio
@@ -1173,6 +1181,9 @@ def coupled_microstrip_z0_even_odd(
 
     if f is None or float(f) <= 0.0:
         return float(z_even_0), float(z_odd_0)
+    if er == 1.0:
+        # Homogeneous air has no dielectric frequency dispersion.
+        return float(z_even_0), float(z_odd_0)
 
     # Frequency-dependent modal effective permittivities.
     fn = float(f) * h / 1e6
@@ -1305,11 +1316,12 @@ def coupled_microstrip_z0_even_odd(
         1.0 - 1.1241 * (r12 / r16) * np.exp(-0.026 * np.power(fn, 1.15656) - r15)
     )
 
-    z_even = (
-        z_even_0
-        * np.power(0.9408 * np.power(ee_single_f, ce) - 0.9603, q0)
-        / np.power((0.9408 - de) * np.power(ee_single_0, ce) - 0.9603, q0)
+    even_ratio = (0.9408 * np.power(ee_single_f, ce) - 0.9603) / (
+        (0.9408 - de) * np.power(ee_single_0, ce) - 0.9603
     )
+    if not np.isfinite(even_ratio) or even_ratio <= 0.0:
+        raise ValueError("Coupled microstrip even-mode dispersion ratio is not physical")
+    z_even = z_even_0 * np.power(even_ratio, q0)
 
     q29 = 15.16 / (1.0 + 0.196 * np.power(er - 1.0, 2.0))
     tmp = np.power(er - 1.0, 3.0)
@@ -1339,10 +1351,12 @@ def coupled_microstrip_z0_even_odd(
     z_odd = z_single_f + (z_odd_0 * np.power(ee_o / ee_o0, q22) - z_single_f * q23) / (
         1.0 + q24 + np.power(0.46 * g, 2.2) * q25
     )
+    if not np.isfinite(z_even) or not np.isfinite(z_odd) or z_even <= 0.0 or z_odd <= 0.0:
+        raise ValueError("Coupled microstrip modal impedance is not physical")
     return float(z_even), float(z_odd)
 
 
-# Differential CPW/DCPWG model returning (Zdiff, Zcm).
+# Differential CPW/DCPWG placeholder: no qualified coupled model yet.
 # Args: W width [m], S_ground trace-to-ground slot [m], S_pair pair gap [m], th substrate height [m], er relative permittivity, t thickness [m], has_metal_backside model flag, f optional frequency [Hz].
 # Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
 # Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
@@ -1356,31 +1370,11 @@ def differential_cpw_zdiff_zcm(
     has_metal_backside: bool = False,
     f: float | None = None,
 ):
-    w = _asf(W)
-    sg = float(S_ground)
-    sp = float(S_pair)
-    h = float(th)
-    if np.any(w <= 0.0) or sg <= 0.0 or sp <= 0.0 or h <= 0.0:
-        raise ValueError(
-            "W, S_ground, S_pair and th must be > 0 for differential CPW/DCPWG."
-        )
-
-    # Quasi-static decomposition:
-    # - even mode: pair gap carries negligible E-field -> dominated by outer CPW slots
-    # - odd mode: adds inner-slot capacitance between the two traces
-    c_out, c_air_out, z_out = _cpw_cap_per_len(
-        w, sg, h, er, t=t, has_metal_backside=has_metal_backside, f=f
+    """Reject unqualified coupled CPW estimates instead of reporting false modes."""
+    raise NotImplementedError(
+        "Differential CPW/DCPWG modal impedance needs a coupled conformal or field solver; "
+        "the former capacitance-sum approximation has an incorrect common-mode limit."
     )
-    c_in, c_air_in, _ = _cpw_cap_per_len(
-        w, 0.5 * sp, h, er, t=t, has_metal_backside=has_metal_backside, f=f
-    )
-
-    c_odd = c_out + c_in
-    c_air_odd = c_air_out + c_air_in
-    z_odd = 1.0 / (C0 * np.sqrt(np.maximum(c_odd * c_air_odd, 1e-30)))
-
-    z_even = z_out
-    return 2.0 * z_odd, 0.5 * z_even
 
 
 class _MicrostripAPI:
