@@ -12,6 +12,7 @@ import types
 from pathlib import Path
 
 import pytest
+from scipy.special import ellipk
 
 
 @pytest.fixture(scope="module")
@@ -109,9 +110,119 @@ def test_thick_microstrip_eeff_includes_air_width_factor(calc):
     )
 
 
-def test_unqualified_differential_cpw_fails_closed(calc):
-    with pytest.raises(NotImplementedError, match="coupled conformal or field solver"):
-        calc.differential_cpw_zdiff_zcm(1e-3, 1e-3, 0.1e-3, 1e-3, 4.2)
+def test_coupled_cpw_modes_and_backing(calc):
+    args = (0.2e-3, 0.15e-3, 0.1e-3, 0.2e-3, 4.2)
+    free_diff, free_common = calc.differential_cpw_zdiff_zcm(*args)
+    backed_diff, backed_common = calc.differential_cpw_zdiff_zcm(
+        *args, has_metal_backside=True
+    )
+    assert (free_diff, free_common) == pytest.approx(
+        (116.3424733170, 72.6655069716), rel=1e-8
+    )
+    assert 0 < backed_diff < free_diff
+    assert 0 < backed_common < free_common
+
+
+def test_coupled_cpw_air_and_merged_trace_limits(calc):
+    width, ground_gap, height = 0.2e-3, 0.15e-3, 0.2e-3
+    errors = []
+    differential = []
+    for pair_gap in (0.1e-3, 0.05e-3):
+        diff, common = calc.differential_cpw_zdiff_zcm(
+            width, ground_gap, pair_gap, height, 4.2
+        )
+        merged = calc.cpw_z0(2 * width + pair_gap, ground_gap, height, 4.2)
+        errors.append(abs(common - merged))
+        differential.append(diff)
+    assert errors[1] < errors[0] < 1.0
+    assert differential[1] < differential[0]
+    a = calc.differential_cpw_zdiff_zcm(width, ground_gap, width, height, 1.0)
+    b = calc.differential_cpw_zdiff_zcm(width, ground_gap, width, 3 * height, 1.0)
+    assert a == pytest.approx(b, rel=1e-10)
+
+
+def test_coupled_cpw_rejects_unmodeled_thickness_and_frequency(calc):
+    args = (0.2e-3, 0.15e-3, 0.1e-3, 0.2e-3, 4.2)
+    with pytest.raises(NotImplementedError, match="Finite-thickness"):
+        calc.differential_cpw_zdiff_zcm(*args, t=35e-6)
+    with pytest.raises(NotImplementedError, match="quasi-static"):
+        calc.differential_cpw_zdiff_zcm(*args, f=100e9)
+
+
+def test_coupled_cpw_mesh_refinement(calc):
+    args = (0.2e-3, 0.15e-3, 0.1e-3, 0.2e-3, 4.2)
+    for backed in (False, True):
+        standard = calc.differential_cpw_zdiff_zcm(
+            *args, has_metal_backside=backed
+        )
+        refined = calc.differential_cpw_zdiff_zcm(
+            *args, has_metal_backside=backed, _cells_per_feature=192
+        )
+        assert standard == pytest.approx(refined, rel=0.005)
+
+
+def test_coupled_cpw_infinite_substrate_scaling(calc):
+    geometry = (0.2e-3, 0.15e-3, 0.1e-3, 1.0)
+    dielectric = calc.differential_cpw_zdiff_zcm(*geometry, 4.2)
+    air = calc.differential_cpw_zdiff_zcm(*geometry, 1.0)
+    half_space_scale = 1.0 / math.sqrt((4.2 + 1.0) / 2.0)
+    assert dielectric == pytest.approx(
+        tuple(value * half_space_scale for value in air), rel=1e-10
+    )
+
+
+def test_coupled_cpw_odd_mode_matches_conformal_air_reference(calc):
+    # Wang, Appendix B.1.2: electric symmetry wall and squared-coordinate map.
+    width, ground_gap, pair_gap = 0.2e-3, 0.15e-3, 0.1e-3
+    a = pair_gap / 2.0
+    b = a + width
+    d = b + ground_gap
+    modulus_squared = d * d * (b * b - a * a) / (b * b * (d * d - a * a))
+    elliptic_ratio = ellipk(modulus_squared) / ellipk(1.0 - modulus_squared)
+    reference_zdiff = calc.n0 / elliptic_ratio
+    solved_zdiff, _ = calc.differential_cpw_zdiff_zcm(
+        width, ground_gap, pair_gap, 0.2e-3, 1.0
+    )
+    assert solved_zdiff == pytest.approx(reference_zdiff, rel=0.005)
+
+
+def test_coupled_cpw_stackup_api_and_width_inverse(pcb):
+    zdiff, zcommon = pcb.coplanar_microstrip_diff.zdiff_zcm(
+        0.2, 0.1, 0.15, er=4.2
+    )
+    assert (zdiff, zcommon) == pytest.approx(
+        (116.3424733170, 72.6655069716), rel=1e-8
+    )
+    width = pcb.coplanar_microstrip_diff.w_for_zdiff(zdiff, 0.1, 0.15, er=4.2)
+    assert width == pytest.approx(0.2, rel=0.01)
+    backed_diff, backed_common = pcb.dcpwg.zdiff_zcm(0.2, 0.1, 0.15, er=4.2)
+    assert backed_diff < zdiff and backed_common < zcommon
+    gap = pcb.dcpwg.s_for_zdiff(backed_diff, 0.2, 0.15, er=4.2)
+    assert gap == pytest.approx(0.1, rel=0.02)
+
+
+def test_coupled_cpw_inverse_default_bounds_are_actionable(pcb):
+    wide_target = pcb.coplanar_microstrip_diff.zdiff_zcm(
+        0.6, 0.1, 0.15, er=4.2
+    )[0]
+    with pytest.raises(ValueError, match="Set w_min and w_max"):
+        pcb.coplanar_microstrip_diff.w_for_zdiff(
+            wide_target, 0.1, 0.15, er=4.2
+        )
+    spaced_target = pcb.coplanar_microstrip_diff.zdiff_zcm(
+        0.2, 0.4, 0.15, er=4.2
+    )[0]
+    with pytest.raises(ValueError, match="Set s_min and s_max"):
+        pcb.coplanar_microstrip_diff.s_for_zdiff(
+            spaced_target, 0.2, 0.15, er=4.2
+        )
+
+
+def test_coupled_cpw_limits_dense_solver_size(calc):
+    with pytest.raises(ValueError, match="1024 free-surface cells"):
+        calc.differential_cpw_zdiff_zcm(
+            0.1e-3, 0.5e-3, 0.5e-3, 0.2e-3, 4.2
+        )
 
 
 def test_supported_microstrip_grid_has_finite_positive_impedances(calc):

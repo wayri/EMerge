@@ -1714,11 +1714,17 @@ def differential_cpw_zdiff_zcm(
     t: float = 0.0,
     has_metal_backside: bool = False,
     f: float | None = None,
+    *,
+    _cells_per_feature: int = 96,
 ):
-    """Reject unqualified differential CPW and grounded-CPW estimates.
+    """Quasi-static coupled-CPW differential and common-mode impedance.
 
-    The former capacitance-sum shortcut had an incorrect common-mode limit; no
-    validated coupled solver is implemented.
+    Solve surface potential for even and odd excitations separately. The
+    homogeneous dielectric slab's Fourier-domain admittance includes an
+    optional ideal backing plane. Coplanar grounds are ideal and extend away
+    from the traces. Each modal impedance follows from its dielectric and air
+    capacitances: ``Z = 1 / (c * sqrt(C_air * C))``. Frequency-dependent
+    dispersion and multilayer dielectrics are not modeled.
 
     Args:
         W (float): Conductor width in metres.
@@ -1726,17 +1732,110 @@ def differential_cpw_zdiff_zcm(
         S_pair (float): Gap between the two signal traces in metres.
         th (float): Substrate height in metres.
         er (float): Relative permittivity.
-        t (float): Conductor thickness in metres.
+        t (float): Conductor thickness in metres; only zero is supported.
         has_metal_backside (bool): Include an ideal continuous backside ground plane.
-        f (float | None): Frequency in hertz.
+        f (float | None): Frequency in hertz, used only as an applicability guard.
+        _cells_per_feature (int): Internal minimum mesh density for convergence checks.
+
+    Returns:
+        Differential and common-mode impedance in ohms, respectively.
 
     Raises:
-        NotImplementedError: No validated coupled CPW or grounded-CPW model.
+        ValueError: Nonphysical or under-resolved geometry.
+        NotImplementedError: Finite thickness or frequency beyond the quasi-static range.
     """
-    raise NotImplementedError(
-        "Differential CPW/DCPWG modal impedance needs a coupled conformal or field solver; "
-        "the former capacitance-sum approximation has an incorrect common-mode limit."
+    if not all(
+        np.isfinite(value) and value > 0.0
+        for value in (W, S_ground, S_pair, th, er)
+    ):
+        raise ValueError(
+            "Coupled CPW widths, gaps, height and er must be finite and positive."
+        )
+    if not np.isfinite(t) or t < 0.0:
+        raise ValueError("Conductor thickness must be finite and nonnegative.")
+    if t > 0.0:
+        raise NotImplementedError(
+            "Finite-thickness coupled CPW requires a 2D conductor model."
+        )
+    signal_span = 2.0 * W + S_pair + 2.0 * S_ground
+    if not np.isfinite(signal_span):
+        raise ValueError("Coupled CPW span must be finite.")
+    if f is not None:
+        if not np.isfinite(f) or f < 0.0:
+            raise ValueError("Frequency must be finite and nonnegative.")
+        if f * max(signal_span, th) * np.sqrt(er) / C0 > 0.05:
+            raise NotImplementedError(
+                "Coupled CPW frequency is outside the quasi-static range."
+            )
+
+    ground_pad = (
+        max(4.0 * th, 2.0 * signal_span)
+        if has_metal_backside
+        else 2.0 * signal_span
     )
+    half_domain = 0.5 * signal_span + ground_pad
+    if int(_cells_per_feature) != _cells_per_feature or _cells_per_feature < 16:
+        raise ValueError("Coupled CPW mesh density must be an integer of at least 16.")
+    dx_target = min(W, S_ground, S_pair, th) / _cells_per_feature
+    count = 1 << int(np.ceil(np.log2(2.0 * half_domain / dx_target)))
+    if count > 8192:
+        raise ValueError("Coupled CPW aspect ratio exceeds the 8192-cell resolution limit.")
+    dx = 2.0 * half_domain / count
+    x = (np.arange(count) + 0.5) * dx - half_domain
+    left = (x >= -0.5 * S_pair - W) & (x <= -0.5 * S_pair)
+    right = (x >= 0.5 * S_pair) & (x <= 0.5 * S_pair + W)
+    ground = (x <= -0.5 * S_pair - W - S_ground) | (
+        x >= 0.5 * S_pair + W + S_ground
+    )
+    if min(np.count_nonzero(left), np.count_nonzero(right)) < 8:
+        raise ValueError("Coupled CPW conductors are under-resolved.")
+    unknown = np.flatnonzero(~(left | right | ground))
+    if len(unknown) > 1024:
+        raise ValueError(
+            "Coupled CPW has more than 1024 free-surface cells; "
+            "use a narrower geometry range or lower mesh density."
+        )
+    signals = np.flatnonzero(left | right)
+    signal_voltage = np.ones((len(signals), 2))
+    signal_voltage[right[signals], 1] = -1.0
+    wave_number = 2.0 * PI * np.fft.rfftfreq(count, d=dx)
+
+    def modal_capacitance(relative_permittivity):
+        """Solve free-surface potential and integrate signal charge per metre."""
+        kh = wave_number * th
+        if has_metal_backside:
+            lower = np.empty_like(kh)
+            lower[0] = relative_permittivity / th
+            lower[1:] = relative_permittivity * wave_number[1:] / np.tanh(kh[1:])
+        else:
+            tanh_kh = np.tanh(kh)
+            lower = relative_permittivity * wave_number * (
+                1.0 + relative_permittivity * tanh_kh
+            ) / (relative_permittivity + tanh_kh)
+        admittance = (wave_number + lower) / (n0 * C0)
+        kernel = np.fft.irfft(admittance, n=count)
+        free_matrix = kernel[(unknown[:, None] - unknown[None, :]) % count]
+        source_matrix = kernel[(unknown[:, None] - signals[None, :]) % count]
+        potentials = np.zeros((count, 2))
+        potentials[signals] = signal_voltage
+        potentials[unknown] = np.linalg.solve(
+            free_matrix, -source_matrix @ signal_voltage
+        )
+        charges = np.fft.irfft(
+            admittance[:, None] * np.fft.rfft(potentials, axis=0),
+            n=count,
+            axis=0,
+        )
+        return np.sum(charges[left], axis=0) * dx
+
+    capacitance_air = modal_capacitance(1.0)
+    capacitance = modal_capacitance(er)
+    if not np.all(np.isfinite(capacitance_air)) or not np.all(np.isfinite(capacitance)):
+        raise ValueError("Coupled CPW modal capacitance is not finite.")
+    if np.any(capacitance_air <= 0.0) or np.any(capacitance <= 0.0):
+        raise ValueError("Coupled CPW modal capacitance is not positive.")
+    z_even, z_odd = 1.0 / (C0 * np.sqrt(capacitance_air * capacitance))
+    return float(2.0 * z_odd), float(0.5 * z_even)
 
 
 ############################################################
@@ -2588,7 +2687,7 @@ class _DifferentialCPWAPI:
             t (float): Conductor thickness in stackup units.
 
         Returns:
-            No value: raises NotImplementedError until a qualified coupled solver exists.
+            Differential and common-mode impedance in ohms.
         """
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
@@ -2616,7 +2715,7 @@ class _DifferentialCPWAPI:
         t: float = 0.0,
         w_min: float | None = None,
         w_max: float | None = None,
-        n: int = 501,
+        n: int = 31,
     ):
         """Inverse differential CPW/DCPWG width from target differential impedance.
 
@@ -2630,32 +2729,48 @@ class _DifferentialCPWAPI:
             er (float | None): Relative permittivity; overrides stackup material when
                                provided.
             t (float): Conductor thickness in stackup units.
-            w_min (float | None): Optional inverse-search bound in stackup units.
-            w_max (float | None): Optional inverse-search bound in stackup units.
+            w_min (float | None): Optional lower bound; defaults to the smallest
+                                  of pair gap, ground gap and slab height.
+            w_max (float | None): Optional upper bound; defaults to 2.5 times
+                                  slab height. Specify bounds for wider traces.
             n (int): Inverse-search sample count.
 
         Returns:
-            No value: raises NotImplementedError until a qualified coupled solver exists.
+            Solved conductor width in stackup units.
         """
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
+        default_bounds = w_min is None and w_max is None
+        if w_min is None:
+            w_min = min(s_pair, s_ground, h / self._pcb.unit)
+        if w_max is None:
+            w_max = 2.5 * h / self._pcb.unit
         w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, h)
-        wm = _scan_inverse(
-            Zdiff,
-            lambda ws: differential_cpw_zdiff_zcm(
-                ws,
-                s_ground * self._pcb.unit,
-                s_pair * self._pcb.unit,
-                h,
-                ee,
-                t=t * self._pcb.unit,
-                has_metal_backside=self._metal,
-                f=f0,
-            )[0],
-            w_min,
-            w_max,
-            n,
-        )
+        def _zd(ws):
+            out = np.empty_like(ws, dtype=float)
+            for i, width in enumerate(ws):
+                out[i] = differential_cpw_zdiff_zcm(
+                    float(width),
+                    s_ground * self._pcb.unit,
+                    s_pair * self._pcb.unit,
+                    h,
+                    ee,
+                    t=t * self._pcb.unit,
+                    has_metal_backside=self._metal,
+                    f=f0,
+                )[0]
+            return out
+
+        try:
+            wm = _scan_inverse(Zdiff, _zd, w_min, w_max, n)
+        except ValueError as exc:
+            if default_bounds and "outside the achievable range" in str(exc):
+                raise ValueError(
+                    f"{exc}; the default width range is "
+                    f"[{w_min / self._pcb.unit:g}, {w_max / self._pcb.unit:g}] "
+                    "stackup units. Set w_min and w_max to search wider traces."
+                ) from exc
+            raise
         return float(wm / self._pcb.unit)
 
     def s_for_zdiff(
@@ -2670,7 +2785,7 @@ class _DifferentialCPWAPI:
         t: float = 0.0,
         s_min: float | None = None,
         s_max: float | None = None,
-        n: int = 501,
+        n: int = 31,
     ):
         """Inverse differential CPW/DCPWG pair spacing from target differential impedance.
 
@@ -2684,15 +2799,22 @@ class _DifferentialCPWAPI:
             er (float | None): Relative permittivity; overrides stackup material when
                                provided.
             t (float): Conductor thickness in stackup units.
-            s_min (float | None): Optional inverse-search bound in stackup units.
-            s_max (float | None): Optional inverse-search bound in stackup units.
+            s_min (float | None): Optional lower bound; defaults to half the
+                                  smallest of width, ground gap and slab height.
+            s_max (float | None): Optional upper bound; defaults to twice that
+                                  smallest dimension. Specify wider pair gaps.
             n (int): Inverse-search sample count.
 
         Returns:
-            No value: raises NotImplementedError until a qualified coupled solver exists.
+            Solved pair gap in stackup units.
         """
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
+        default_bounds = s_min is None and s_max is None
+        if s_min is None:
+            s_min = 0.5 * min(w, s_ground, h / self._pcb.unit)
+        if s_max is None:
+            s_max = 2.0 * min(w, s_ground, h / self._pcb.unit)
         s_min, s_max = _inverse_bounds_m(s_min, s_max, self._pcb.unit, h)
         wm = w * self._pcb.unit
         sgm = s_ground * self._pcb.unit
@@ -2713,7 +2835,16 @@ class _DifferentialCPWAPI:
                 )[0]
             return out
 
-        sm = _scan_inverse(Zdiff, _zd, s_min, s_max, n)
+        try:
+            sm = _scan_inverse(Zdiff, _zd, s_min, s_max, n)
+        except ValueError as exc:
+            if default_bounds and "outside the achievable range" in str(exc):
+                raise ValueError(
+                    f"{exc}; the default pair-gap range is "
+                    f"[{s_min / self._pcb.unit:g}, {s_max / self._pcb.unit:g}] "
+                    "stackup units. Set s_min and s_max for wider pair gaps."
+                ) from exc
+            raise
         return float(sm / self._pcb.unit)
 
 
