@@ -435,14 +435,19 @@ def stripline_z0(W: float, b: float, er: float, t: float = 0.0):
     W = _asf(W)
     b = float(b)
     t = float(t)
+    if not np.all(np.isfinite(W)) or np.any(W <= 0.0):
+        raise ValueError("Stripline width must be finite and positive.")
+    if not np.isfinite(b) or b <= 0.0 or not np.isfinite(t) or t < 0.0 or t >= b:
+        raise ValueError("Stripline requires finite b > t >= 0.")
+    if not np.isfinite(er) or er <= 0.0:
+        raise ValueError("Relative permittivity must be finite and positive.")
 
     if t <= 0.0:
         x = PI * W / (2.0 * b)
         k = _sech(x)
         return (n0 / (4.0 * np.sqrt(er))) * _ellip_ratio(k)
 
-    t = min(t, 0.99 * b)
-    x = np.clip(t / b, 1e-15, 0.99)
+    x = t / b
     m = 2.0 / (1.0 + (2.0 * x / 3.0) * (1.0 - x))
     u = np.maximum(W / b, 1e-15)
     frac = (x / (2.0 - x)) ** 2 + np.power((0.0796 * x) / (u + 1.1 * x), m)
@@ -845,7 +850,7 @@ def coax_d_for_z0(Z0: float, d_outer: float, er: float):
 def _coax_cutoff_te_approx(
     d_inner: float, d_outer: float, er: float = 1.0, mur: float = 1.0
 ):
-    """Return an approximate TE cutoff when the exact annular root is unavailable."""
+    """Return the approximate TE(1,1) cutoff when explicitly requested."""
     return C0 / (
         PI * (float(d_outer) + float(d_inner)) * np.sqrt(float(er) * float(mur))
     )
@@ -854,10 +859,19 @@ def _coax_cutoff_te_approx(
 def _coax_cutoff_tm_approx(
     d_inner: float, d_outer: float, er: float = 1.0, mur: float = 1.0
 ):
-    """Return an approximate TM cutoff when the exact annular root is unavailable."""
+    """Return the approximate TM(0,1) cutoff when explicitly requested."""
     return C0 / (
         2.0 * (float(d_outer) - float(d_inner)) * np.sqrt(float(er) * float(mur))
     )
+
+
+def _validate_coax_cutoff(d_inner, d_outer, er, mur):
+    """Reject nonphysical coax dimensions and constitutive parameters."""
+    di, do, eps, mu = map(float, (d_inner, d_outer, er, mur))
+    if not all(np.isfinite(value) for value in (di, do, eps, mu)):
+        raise ValueError("Coax cutoff inputs must be finite.")
+    if di <= 0.0 or do <= di or eps <= 0.0 or mu <= 0.0:
+        raise ValueError("Coax cutoff requires d_outer > d_inner > 0 and er, mur > 0.")
 
 
 def _coax_mode_char(mode: str, n: int, x: float, ratio: float) -> float:
@@ -901,6 +915,8 @@ def _bisect_root(fn, x0: float, x1: float, iters: int = 80) -> float:
 
 def _coax_mode_root(n: int, m: int, d_inner: float, d_outer: float, mode: str):
     """Locate an annular coax TE/TM transverse-wavenumber eigen-root."""
+    if int(n) != n or int(m) != m:
+        raise ValueError("Coax mode indices must be integers.")
     n = int(n)
     m = int(m)
     if n < 0 or m < 1:
@@ -967,13 +983,13 @@ def coax_cutoff_te(
     Returns:
         TE_nm coaxial higher-mode cutoff frequency in hertz.
     """
+    _validate_coax_cutoff(d_inner, d_outer, er, mur)
     if not exact:
+        if (n, m) != (1, 1):
+            raise ValueError("The TE cutoff estimate supports only TE(1,1).")
         return _coax_cutoff_te_approx(d_inner, d_outer, er=er, mur=mur)
-    try:
-        kc = _coax_mode_root(n=n, m=m, d_inner=d_inner, d_outer=d_outer, mode="te")
-        return C0 * kc / (2.0 * PI * np.sqrt(float(er) * float(mur)))
-    except Exception:
-        return _coax_cutoff_te_approx(d_inner, d_outer, er=er, mur=mur)
+    kc = _coax_mode_root(n=n, m=m, d_inner=d_inner, d_outer=d_outer, mode="te")
+    return C0 * kc / (2.0 * PI * np.sqrt(float(er) * float(mur)))
 
 
 def coax_cutoff_tm(
@@ -1001,13 +1017,13 @@ def coax_cutoff_tm(
     Returns:
         TM_nm coaxial higher-mode cutoff frequency in hertz.
     """
+    _validate_coax_cutoff(d_inner, d_outer, er, mur)
     if not exact:
+        if (n, m) != (0, 1):
+            raise ValueError("The TM cutoff estimate supports only TM(0,1).")
         return _coax_cutoff_tm_approx(d_inner, d_outer, er=er, mur=mur)
-    try:
-        kc = _coax_mode_root(n=n, m=m, d_inner=d_inner, d_outer=d_outer, mode="tm")
-        return C0 * kc / (2.0 * PI * np.sqrt(float(er) * float(mur)))
-    except Exception:
-        return _coax_cutoff_tm_approx(d_inner, d_outer, er=er, mur=mur)
+    kc = _coax_mode_root(n=n, m=m, d_inner=d_inner, d_outer=d_outer, mode="tm")
+    return C0 * kc / (2.0 * PI * np.sqrt(float(er) * float(mur)))
 
 
 ############################################################
@@ -1040,6 +1056,15 @@ def twisted_pair_eeff(
     """
     d_center = float(d_center)
     d_wire = float(d_wire)
+    if not all(
+        np.isfinite(value) for value in (d_center, d_wire, er, er1, twists_per_len)
+    ):
+        raise ValueError("Twisted-pair inputs must be finite.")
+    if d_wire <= 0.0 or er <= 0.0 or er1 <= 0.0 or twists_per_len < 0.0:
+        raise ValueError(
+            "Twisted-pair diameters and permittivities must be positive; "
+            "twist rate cannot be negative."
+        )
     if d_center <= d_wire:
         raise ValueError("d_center must be greater than d_wire for twisted pair.")
     theta = np.arctan(float(twists_per_len) * PI * d_center)
@@ -1073,7 +1098,7 @@ def twisted_pair_z0(
     eeff = twisted_pair_eeff(
         d_center, d_wire, er, er1=er1, twists_per_len=twists_per_len, ptfe=ptfe
     )
-    arg = max(float(d_center) / float(d_wire), 1.0 + 1e-12)
+    arg = float(d_center) / float(d_wire)
     return n0 / (PI * np.sqrt(eeff)) * np.arccosh(arg)
 
 
@@ -1100,16 +1125,38 @@ def twisted_pair_d_center_for_z0(
     Returns:
         Centre spacing in metres for target twisted-pair impedance.
     """
-    eeff = twisted_pair_eeff(
-        d_center=max(2.0 * float(d_wire), float(d_wire) + 1e-12),
-        d_wire=d_wire,
-        er=er,
-        er1=er1,
-        twists_per_len=twists_per_len,
-        ptfe=ptfe,
-    )
-    k = np.cosh(PI * float(z0) * np.sqrt(eeff) / n0)
-    return float(float(d_wire) * k)
+    target = float(z0)
+    wire = float(d_wire)
+    if not np.isfinite(target) or target <= 0.0 or not np.isfinite(wire) or wire <= 0.0:
+        raise ValueError("Target impedance and wire diameter must be finite and positive.")
+    lower = np.nextafter(wire, np.inf)
+    upper = 2.0 * wire
+
+    def impedance(spacing):
+        return twisted_pair_z0(
+            spacing,
+            wire,
+            er,
+            er1=er1,
+            twists_per_len=twists_per_len,
+            ptfe=ptfe,
+        )
+
+    for _ in range(80):
+        if impedance(upper) >= target:
+            break
+        upper *= 2.0
+    else:
+        raise ValueError("No finite centre-spacing solution for target impedance.")
+    for _ in range(80):
+        middle = 0.5 * (lower + upper)
+        if middle <= lower or middle >= upper:
+            break
+        if impedance(middle) < target:
+            lower = middle
+        else:
+            upper = middle
+    return float(0.5 * (lower + upper))
 
 
 def twisted_pair_d_wire_for_z0(

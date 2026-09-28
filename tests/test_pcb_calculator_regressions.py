@@ -137,3 +137,49 @@ def test_coupled_microstrip_grid_has_finite_positive_modes(calc):
             width_ratio * h, gap_ratio * h, h, er, f=ghz * 1e9
         )
         assert all(math.isfinite(z) and 0 < z < 1000 for z in (even, odd))
+
+
+def test_stripline_rejects_nonphysical_geometry_instead_of_clipping(calc):
+    with pytest.raises(ValueError, match="b > t"):
+        calc.stripline_z0(0.2e-3, 0.2e-3, 4.2, t=0.2e-3)
+    with pytest.raises(ValueError, match="positive"):
+        calc.stripline_z0(-0.2e-3, 0.2e-3, 4.2)
+
+
+def test_coax_cutoff_does_not_disguise_exact_solver_failures(calc, monkeypatch):
+    inner, outer = 0.2e-3, 1e-3
+    for mode, n, method in (("te", 1, calc.coax_cutoff_te),
+                            ("tm", 0, calc.coax_cutoff_tm)):
+        frequency = method(inner, outer, n=n)
+        wave_number = 2.0 * math.pi * frequency / calc.C0
+        residual = calc._coax_mode_char(mode, n, wave_number * inner / 2, outer / inner)
+        assert abs(residual) < 1e-10
+    with pytest.raises(ValueError, match="d_outer > d_inner"):
+        calc.coax_cutoff_te(-0.2e-3, 1e-3)
+    with pytest.raises(ValueError, match="supports only TE"):
+        calc.coax_cutoff_te(0.2e-3, 1e-3, n=2, exact=False)
+    with pytest.raises(ValueError, match="supports only TM"):
+        calc.coax_cutoff_tm(0.2e-3, 1e-3, n=1, exact=False)
+    def failed_root(**_kwargs):
+        raise ValueError("modal root unavailable")
+    monkeypatch.setattr(calc, "_coax_mode_root", failed_root)
+    with pytest.raises(ValueError, match="modal root unavailable"):
+        calc.coax_cutoff_te(0.2e-3, 1e-3)
+    with pytest.raises(ValueError, match="modal root unavailable"):
+        calc.coax_cutoff_tm(0.2e-3, 1e-3)
+
+
+def test_twisted_pair_inverse_solves_twist_dependent_relation(calc):
+    for twists in (0.0, 500.0, 10000.0):
+        spacing = 0.55e-3
+        wire = 0.2e-3
+        z0 = calc.twisted_pair_z0(spacing, wire, 9.0, twists_per_len=twists)
+        solved = calc.twisted_pair_d_center_for_z0(
+            z0, wire, 9.0, twists_per_len=twists
+        )
+        assert solved == pytest.approx(spacing, rel=1e-10)
+        assert calc.twisted_pair_z0(
+            solved, wire, 9.0, twists_per_len=twists
+        ) == pytest.approx(z0, rel=1e-10)
+    with pytest.raises(ValueError, match="positive"):
+        calc.twisted_pair_z0(0.5e-3, -0.2e-3, 4.0)
