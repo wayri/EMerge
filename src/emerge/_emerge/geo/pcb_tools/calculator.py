@@ -23,8 +23,8 @@ assume the cross sections described by their individual functions.
 """
 
 import numpy as np
-from scipy.special import ellipk, ellipkm1, jv, yv
 from emsutil import Material
+from scipy.special import ellipk, ellipkm1, jv, yv
 
 n0 = 376.73031366857
 PI = np.pi
@@ -898,7 +898,7 @@ def _bisect_root(fn, x0: float, x1: float, iters: int = 80) -> float:
     if f0 * f1 > 0.0:
         raise ValueError("Invalid bracket for bisection.")
     a, b = float(x0), float(x1)
-    fa, fb = f0, f1
+    fa = f0
     for _ in range(int(iters)):
         m = 0.5 * (a + b)
         fm = float(fn(m))
@@ -907,7 +907,7 @@ def _bisect_root(fn, x0: float, x1: float, iters: int = 80) -> float:
         if abs(fm) < 1e-13:
             return float(m)
         if fa * fm <= 0.0:
-            b, fb = m, fm
+            b = m
         else:
             a, fa = m, fm
     return float(0.5 * (a + b))
@@ -1544,14 +1544,6 @@ def coupled_microstrip_z0_even_odd(
     p2 = 0.33622 * (1.0 - np.exp(-0.03442 * er))
     p3 = 0.0363 * np.exp(-4.6 * u) * (1.0 - np.exp(-np.power(fn / 38.7, 4.97)))
     p4 = 1.0 + 2.751 * (1.0 - np.exp(-np.power(er / 15.916, 8.0)))
-    p5 = 0.334 * np.exp(-3.3 * np.power(er / 15.0, 3.0)) + 0.746
-    p6 = p5 * np.exp(-np.power(fn / 18.0, 0.368))
-    p7 = 1.0 + 4.069 * p6 * np.power(g, 0.479) * np.exp(
-        -1.347 * np.power(g, 0.595) - 0.17 * np.power(g, 2.5)
-    )
-    fe = p1 * p2 * np.power(np.maximum((p3 * p4 + 0.1844 * p7) * fn, 1e-30), 1.5763)
-    ee_e = er - (er - ee_e0) / (1.0 + fe)
-
     p8 = 0.7168 * (1.0 + 1.076 / (1.0 + 0.0576 * (er - 1.0)))
     p9 = p8 - 0.7913 * (1.0 - np.exp(-np.power(fn / 20.0, 1.424))) * np.arctan(
         2.481 * np.power(er / 8.0, 0.946)
