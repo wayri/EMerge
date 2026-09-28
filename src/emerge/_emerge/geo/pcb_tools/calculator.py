@@ -74,7 +74,7 @@
 #
 # Last Cleanup: 2025-01-01
 import numpy as np
-from scipy.special import jv, yv
+from scipy.special import ellipk, ellipkm1, jv, yv
 from emsutil import Material
 
 n0 = 376.73031366857
@@ -103,9 +103,12 @@ def _ellipk_agm(k):
 
 
 def _ellip_ratio(k):
-    k = np.clip(_asf(k), 0.0, 1.0 - 1e-15)
-    kp = np.sqrt(1.0 - k * k)
-    return _ellipk_agm(k) / _ellipk_agm(kp)
+    k = _asf(k)
+    if np.any(~np.isfinite(k)) or np.any(k < 0.0) or np.any(k > 1.0):
+        raise ValueError("Elliptic modulus must lie in [0, 1]")
+    m = k * k
+    # ellipkm1(m) evaluates K(1-m) without cancellation when m is tiny.
+    return ellipk(m) / ellipkm1(m)
 
 
 def _coth(x):
@@ -144,7 +147,7 @@ def _ynp(n: int, x: float) -> float:
 def _material_er(mat: Material, f0: float) -> float:
     er = getattr(mat, "er", None)
     if er is None:
-        return 1.0
+        raise ValueError("Dielectric material has no relative permittivity")
     if hasattr(er, "scalar"):
         return float(er.scalar(f0))
     if callable(er):
@@ -160,8 +163,8 @@ def _inverse_from_samples(target: float, xs, ys) -> float:
     y = y[m]
     if x.size == 0:
         raise ValueError("No finite samples available for inverse solve")
-    if x.size == 1:
-        return float(x[0])
+    if x.size < 2:
+        raise ValueError("At least two finite samples are required for inverse solve")
 
     dy = np.diff(y)
     if np.all(dy >= 0.0):
@@ -173,13 +176,29 @@ def _inverse_from_samples(target: float, xs, ys) -> float:
 
     lo = float(min(yk[0], yk[-1]))
     hi = float(max(yk[0], yk[-1]))
-    tgt = float(np.clip(target, lo, hi))
-    return float(np.interp(tgt, yk, xk))
+    if not np.isfinite(target) or target < lo or target > hi:
+        raise ValueError(f"Target {target} is outside the achievable range [{lo}, {hi}]")
+    return float(np.interp(target, yk, xk))
+
+
+def _inverse_bounds_m(x_min, x_max, unit: float, scale_m: float):
+    """Convert optional search bounds from stackup units to SI metres."""
+    if not np.isfinite(unit) or unit <= 0 or not np.isfinite(scale_m) or scale_m <= 0:
+        raise ValueError("Stackup unit and reference distance must be positive and finite")
+    lo = 0.1 * scale_m if x_min is None else float(x_min) * unit
+    hi = 10.0 * scale_m if x_max is None else float(x_max) * unit
+    if not np.isfinite(lo) or not np.isfinite(hi) or lo <= 0 or hi <= lo:
+        raise ValueError("Inverse search bounds must be positive, finite and increasing")
+    return lo, hi
 
 
 def _scan_inverse(target: float, fn, x_min: float, x_max: float, n: int = 501) -> float:
-    x0 = max(float(x_min), 1e-15)
-    x1 = max(float(x_max), x0 * 1.00001)
+    if not np.isfinite(target) or not np.isfinite(x_min) or not np.isfinite(x_max):
+        raise ValueError("Inverse target and bounds must be finite")
+    x0 = float(x_min)
+    x1 = float(x_max)
+    if x0 <= 0.0 or x1 <= x0 or int(n) < 2:
+        raise ValueError("Inverse search needs positive, increasing bounds and at least two samples")
     xs = np.geomspace(x0, x1, int(n))
     ys = _asf(fn(xs))
     x_est = _inverse_from_samples(target, xs, ys)
@@ -188,12 +207,14 @@ def _scan_inverse(target: float, fn, x_min: float, x_max: float, n: int = 501) -
     xk = _asf(xs)[m]
     yk = _asf(ys)[m]
     if xk.size < 2:
-        return float(x_est)
+        raise ValueError("Inverse solve has fewer than two finite model samples")
 
     d = yk - float(target)
     crossings = np.where((d[:-1] == 0.0) | (d[1:] == 0.0) | (d[:-1] * d[1:] < 0.0))[0]
     if crossings.size == 0:
-        return float(x_est)
+        if np.min(np.abs(d)) <= 1e-9 * max(abs(float(target)), 1.0):
+            return float(xk[np.argmin(np.abs(d))])
+        raise ValueError("Target has no solution within the requested search bounds")
 
     mids = 0.5 * (xk[crossings] + xk[crossings + 1])
     i = int(crossings[np.argmin(np.abs(mids - float(x_est)))])
@@ -256,8 +277,7 @@ def microstrip_z0(W: float, th: float, er: float, t: float = 0.0):
         dur = 0.5 * du1 * (1.0 + _sech(np.sqrt(np.maximum(er - 1.0, 0.0))))
         u = u + dur
 
-    eeff = (er + 1.0) / 2.0 + (er - 1.0) / 2.0 * (1.0 / np.sqrt(1.0 + 12.0 / u))
-    eeff = eeff + np.where(u < 1.0, 0.04 * (1.0 - u) ** 2 * (er - 1.0) / 2.0, 0.0)
+    eeff = microstrip_eeff(W, h, er, t=t)
 
     return np.where(
         u <= 1.0,
@@ -275,16 +295,22 @@ def microstrip_eeff(W: float, th: float, er: float, t: float = 0.0):
     h = float(th)
     u = np.maximum(W / h, 1e-12)
 
+    thickness_factor = 1.0
     if t is not None and t > 0.0:
         thn = float(t) / h
         x = np.sqrt(6.517 * u)
         du1 = (thn / PI) * np.log(1.0 + (4.0 * np.e) / (thn * _coth(x) ** 2))
         dur = 0.5 * du1 * (1.0 + _sech(np.sqrt(np.maximum(er - 1.0, 0.0))))
+        # Hammerstad/Jensen uses different width corrections in air and in
+        # dielectric; their air-impedance ratio also corrects epsilon_eff.
+        z_air_1 = microstrip_z0((u + du1) * h, h, 1.0)
+        z_air_r = microstrip_z0((u + dur) * h, h, 1.0)
+        thickness_factor = (z_air_1 / z_air_r) ** 2
         u = u + dur
 
     eeff = (er + 1.0) / 2.0 + (er - 1.0) / 2.0 * (1.0 / np.sqrt(1.0 + 12.0 / u))
     eeff = eeff + np.where(u < 1.0, 0.04 * (1.0 - u) ** 2 * (er - 1.0) / 2.0, 0.0)
-    return eeff
+    return eeff * thickness_factor
 
 
 # Microstrip effective permittivity with frequency dispersion.
@@ -325,6 +351,12 @@ def microstrip_z0_dispersion(W: float, th: float, er: float, f: float, t: float 
     W = _asf(W)
     h = float(th)
     f = float(f)
+    if not np.isfinite(h) or h <= 0 or np.any(~np.isfinite(W)) or np.any(W <= 0):
+        raise ValueError("Microstrip width and substrate height must be positive and finite")
+    if not np.isfinite(er) or not 1.0 <= er <= 18.0 or not np.isfinite(f) or f < 0:
+        raise ValueError("Microstrip dispersion requires 1 <= er <= 18 and finite f >= 0")
+    if np.any(W / h < 0.1) or np.any(W / h > 10.0) or h * f / C0 > 0.1:
+        raise ValueError("Microstrip impedance dispersion is outside its published geometry/frequency range")
     z0_0 = _asf(microstrip_z0(W, h, er, t=t))
     ee0 = _asf(microstrip_eeff(W, h, er, t=t))
     if f <= 0.0:
@@ -342,7 +374,7 @@ def microstrip_z0_dispersion(W: float, th: float, er: float, f: float, t: float 
     r6 = np.clip(22.2 * (u**1.92), a_min=None, a_max=20)
     r7 = 1.206 - 0.3144 * np.exp(-r1) * (1.0 - np.exp(-r2))
     r8 = 1.0 + 1.275 * (
-        1.0 - np.exp(-0.004625 * r3 * er * 1.674) * (fn / 18.365) ** 2.745
+        1.0 - np.exp(-0.004625 * r3 * er**1.674 * (fn / 18.365) ** 2.745)
     )
     tmp = (er - 1.0) ** 6.0
     r9 = (
@@ -362,7 +394,10 @@ def microstrip_z0_dispersion(W: float, th: float, er: float, f: float, t: float 
     r17 = r7 * (
         1.0 - 1.1241 * (r12 / r16) * np.exp(-0.026 * np.power(fn, 1.15656) - r15)
     )
-    d = np.power(np.maximum(r13 / np.maximum(r14, 1e-30), 1e-30), r17)
+    ratio = r13 / r14
+    if np.any(~np.isfinite(ratio)) or np.any(ratio <= 0.0):
+        raise ValueError("Microstrip dispersion ratio is not physical for this geometry")
+    d = np.power(ratio, r17)
     return z0_0 * d
 
 
@@ -447,7 +482,7 @@ def broadside_stripline_zdiff_zcm(W: float, G: float, b: float, er: float):
         r = np.sqrt(num / den)
         r = float(np.clip(r, 1e-15, 1.0 - 1e-15))
         rk = float(np.clip(r / max(k, 1e-15), 1e-15, 1.0 - 1e-15))
-        return (2.0 / PI) * np.arctanh(r) - s * np.arctanh(rk)
+        return (2.0 / PI) * (np.arctanh(r) - s * np.arctanh(rk))
 
     def _k_from_w(wratio: float) -> float:
         if wratio <= 0.0:
@@ -461,10 +496,7 @@ def broadside_stripline_zdiff_zcm(W: float, G: float, b: float, er: float):
                 "Broadside k-solve failed due to non-finite endpoint value."
             )
         if flo > 0.0 or fhi < 0.0:
-            ks = np.linspace(lo, hi, 2001)
-            fs = np.asarray([_w_from_k(float(kk)) - wratio for kk in ks], dtype=float)
-            i = int(np.argmin(np.abs(fs)))
-            return float(ks[i])
+            raise ValueError("Broadside width has no bracketed modal solution")
         for _ in range(80):
             mid = 0.5 * (lo + hi)
             fm = _w_from_k(mid) - wratio
@@ -1149,6 +1181,9 @@ def coupled_microstrip_z0_even_odd(
 
     if f is None or float(f) <= 0.0:
         return float(z_even_0), float(z_odd_0)
+    if er == 1.0:
+        # Homogeneous air has no dielectric frequency dispersion.
+        return float(z_even_0), float(z_odd_0)
 
     # Frequency-dependent modal effective permittivities.
     fn = float(f) * h / 1e6
@@ -1281,11 +1316,12 @@ def coupled_microstrip_z0_even_odd(
         1.0 - 1.1241 * (r12 / r16) * np.exp(-0.026 * np.power(fn, 1.15656) - r15)
     )
 
-    z_even = (
-        z_even_0
-        * np.power(0.9408 * np.power(ee_single_f, ce) - 0.9603, q0)
-        / np.power((0.9408 - de) * np.power(ee_single_0, ce) - 0.9603, q0)
+    even_ratio = (0.9408 * np.power(ee_single_f, ce) - 0.9603) / (
+        (0.9408 - de) * np.power(ee_single_0, ce) - 0.9603
     )
+    if not np.isfinite(even_ratio) or even_ratio <= 0.0:
+        raise ValueError("Coupled microstrip even-mode dispersion ratio is not physical")
+    z_even = z_even_0 * np.power(even_ratio, q0)
 
     q29 = 15.16 / (1.0 + 0.196 * np.power(er - 1.0, 2.0))
     tmp = np.power(er - 1.0, 3.0)
@@ -1315,10 +1351,12 @@ def coupled_microstrip_z0_even_odd(
     z_odd = z_single_f + (z_odd_0 * np.power(ee_o / ee_o0, q22) - z_single_f * q23) / (
         1.0 + q24 + np.power(0.46 * g, 2.2) * q25
     )
+    if not np.isfinite(z_even) or not np.isfinite(z_odd) or z_even <= 0.0 or z_odd <= 0.0:
+        raise ValueError("Coupled microstrip modal impedance is not physical")
     return float(z_even), float(z_odd)
 
 
-# Differential CPW/DCPWG model returning (Zdiff, Zcm).
+# Differential CPW/DCPWG placeholder: no qualified coupled model yet.
 # Args: W width [m], S_ground trace-to-ground slot [m], S_pair pair gap [m], th substrate height [m], er relative permittivity, t thickness [m], has_metal_backside model flag, f optional frequency [Hz].
 # Returns: Numeric result for the requested quantity; may be scalar, ndarray, tuple, or dict depending on the function.
 # Notes: Core formula functions use SI units (meters, Hz, Ohms) unless explicitly stated otherwise.
@@ -1332,31 +1370,11 @@ def differential_cpw_zdiff_zcm(
     has_metal_backside: bool = False,
     f: float | None = None,
 ):
-    w = _asf(W)
-    sg = float(S_ground)
-    sp = float(S_pair)
-    h = float(th)
-    if np.any(w <= 0.0) or sg <= 0.0 or sp <= 0.0 or h <= 0.0:
-        raise ValueError(
-            "W, S_ground, S_pair and th must be > 0 for differential CPW/DCPWG."
-        )
-
-    # Quasi-static decomposition:
-    # - even mode: pair gap carries negligible E-field -> dominated by outer CPW slots
-    # - odd mode: adds inner-slot capacitance between the two traces
-    c_out, c_air_out, z_out = _cpw_cap_per_len(
-        w, sg, h, er, t=t, has_metal_backside=has_metal_backside, f=f
+    """Reject unqualified coupled CPW estimates instead of reporting false modes."""
+    raise NotImplementedError(
+        "Differential CPW/DCPWG modal impedance needs a coupled conformal or field solver; "
+        "the former capacitance-sum approximation has an incorrect common-mode limit."
     )
-    c_in, c_air_in, _ = _cpw_cap_per_len(
-        w, 0.5 * sp, h, er, t=t, has_metal_backside=has_metal_backside, f=f
-    )
-
-    c_odd = c_out + c_in
-    c_air_odd = c_air_out + c_air_in
-    z_odd = 1.0 / (C0 * np.sqrt(np.maximum(c_odd * c_air_odd, 1e-30)))
-
-    z_even = z_out
-    return 2.0 * z_odd, 0.5 * z_even
 
 
 class _MicrostripAPI:
@@ -1417,15 +1435,14 @@ class _MicrostripAPI:
         f0: float = 1e9,
         er: float | None = None,
         t: float = 0.0,
-        w_min: float = 1e-6,
-        w_max: float = 1e-1,
+        w_min: float | None = None,
+        w_max: float | None = None,
         n: int = 401,
         incl_dispersion: bool = True,
     ):
         h = self._pcb.layer_distance(layer, ground_layer)
         ee = self._pcb.effective_er(layer, ground_layer, f0, er=er)
-        w_min = 0.1 * h
-        w_max = 10 * h
+        w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, h)
         if incl_dispersion:
             wm = _scan_inverse(
                 Z0,
@@ -1501,12 +1518,13 @@ class _StriplineAPI:
         f0: float = 1e9,
         er: float | None = None,
         t: float = 0.0,
-        w_min: float = 1e-6,
-        w_max: float = 1e-1,
+        w_min: float | None = None,
+        w_max: float | None = None,
         n: int = 401,
     ):
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
+        w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, b)
         wm = _scan_inverse(
             Z0,
             lambda ws: stripline_z0(ws, b, ee, t=t * self._pcb.unit),
@@ -1571,12 +1589,13 @@ class _EdgeCoupledStriplineAPI:
         gnd_bot: int,
         f0: float = 1e9,
         er: float | None = None,
-        w_min: float = 1e-6,
-        w_max: float = 1e-1,
+        w_min: float | None = None,
+        w_max: float | None = None,
         n: int = 501,
     ):
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
+        w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, b)
         wm = _scan_inverse(
             Zdiff,
             lambda ws: coupled_stripline_zdiff(ws, s * self._pcb.unit, b, ee),
@@ -1598,12 +1617,13 @@ class _EdgeCoupledStriplineAPI:
         gnd_bot: int,
         f0: float = 1e9,
         er: float | None = None,
-        s_min: float = 1e-6,
-        s_max: float = 1e-1,
+        s_min: float | None = None,
+        s_max: float | None = None,
         n: int = 501,
     ):
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
+        s_min, s_max = _inverse_bounds_m(s_min, s_max, self._pcb.unit, b)
         sm = _scan_inverse(
             Zdiff,
             lambda ss: coupled_stripline_zdiff(w * self._pcb.unit, ss, b, ee),
@@ -1650,12 +1670,13 @@ class _BroadsideCoupledStriplineAPI:
         gnd_bot: int,
         f0: float = 1e9,
         er: float | None = None,
-        w_min: float = 1e-6,
-        w_max: float = 1e-1,
+        w_min: float | None = None,
+        w_max: float | None = None,
         n: int = 501,
     ):
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
+        w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, b)
         wm = _scan_inverse(
             Zdiff,
             lambda ws: broadside_stripline_zdiff_zcm(ws, g * self._pcb.unit, b, ee)[0],
@@ -1677,16 +1698,16 @@ class _BroadsideCoupledStriplineAPI:
         gnd_bot: int,
         f0: float = 1e9,
         er: float | None = None,
-        g_min: float = 1e-6,
-        g_max: float = 1e-1,
+        g_min: float | None = None,
+        g_max: float | None = None,
         n: int = 501,
     ):
         b = self._pcb.layer_distance(gnd_top, gnd_bot)
         ee = self._pcb.effective_er(gnd_top, gnd_bot, f0, er=er)
-        g0 = max(float(g_min), 1e-15)
-        g1 = min(float(g_max), 0.499 * b)
+        g0, g1 = _inverse_bounds_m(g_min, g_max, self._pcb.unit, b)
+        g1 = min(g1, 0.499 * b)
         if g1 <= g0:
-            g1 = max(g0 * 1.0001, min(0.499 * b, g0 * 10.0))
+            raise ValueError("Broadside gap bounds do not fit between reference planes")
 
         # Broadside Zdiff(G) is generally non-monotonic over wide ranges.
         # Restrict solve interval to the initial monotonic (increasing) branch.
@@ -1795,12 +1816,13 @@ class _CPWAPI:
         f0: float = 1e9,
         er: float | None = None,
         t: float = 0.0,
-        w_min: float = 1e-6,
-        w_max: float = 1e-1,
+        w_min: float | None = None,
+        w_max: float | None = None,
         n: int = 501,
     ):
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
+        w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, h)
         wm = _scan_inverse(
             Z0,
             lambda ws: cpw_z0_dispersion(
@@ -1880,12 +1902,13 @@ class _EdgeCoupledMicrostripAPI:
         f0: float = 1e9,
         er: float | None = None,
         t: float = 0.0,
-        w_min: float = 1e-6,
-        w_max: float = 1e-1,
+        w_min: float | None = None,
+        w_max: float | None = None,
         n: int = 501,
     ):
         h = self._pcb.layer_distance(layer, ground_layer)
         ee = self._pcb.effective_er(layer, ground_layer, f0, er=er)
+        w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, h)
 
         def _zd(ws):
             out = np.empty_like(ws, dtype=float)
@@ -1912,12 +1935,13 @@ class _EdgeCoupledMicrostripAPI:
         f0: float = 1e9,
         er: float | None = None,
         t: float = 0.0,
-        s_min: float = 1e-6,
-        s_max: float = 1e-1,
+        s_min: float | None = None,
+        s_max: float | None = None,
         n: int = 501,
     ):
         h = self._pcb.layer_distance(layer, ground_layer)
         ee = self._pcb.effective_er(layer, ground_layer, f0, er=er)
+        s_min, s_max = _inverse_bounds_m(s_min, s_max, self._pcb.unit, h)
         wm = w * self._pcb.unit
         tm = t * self._pcb.unit
 
@@ -1980,12 +2004,13 @@ class _DifferentialCPWAPI:
         f0: float = 1e9,
         er: float | None = None,
         t: float = 0.0,
-        w_min: float = 1e-6,
-        w_max: float = 1e-1,
+        w_min: float | None = None,
+        w_max: float | None = None,
         n: int = 501,
     ):
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
+        w_min, w_max = _inverse_bounds_m(w_min, w_max, self._pcb.unit, h)
         wm = _scan_inverse(
             Zdiff,
             lambda ws: differential_cpw_zdiff_zcm(
@@ -2018,12 +2043,13 @@ class _DifferentialCPWAPI:
         f0: float = 1e9,
         er: float | None = None,
         t: float = 0.0,
-        s_min: float = 1e-6,
-        s_max: float = 1e-1,
+        s_min: float | None = None,
+        s_max: float | None = None,
         n: int = 501,
     ):
         h = self._pcb.layer_distance(layer, ref_layer)
         ee = self._pcb.effective_er(layer, ref_layer, f0, er=er)
+        s_min, s_max = _inverse_bounds_m(s_min, s_max, self._pcb.unit, h)
         wm = w * self._pcb.unit
         sgm = s_ground * self._pcb.unit
         tm = t * self._pcb.unit
@@ -2463,7 +2489,10 @@ class PCBCalculator:
         self, layer: int, ground_layer: int, f0: float, er: float | None = None
     ) -> float:
         if er is not None:
-            return float(er)
+            value = float(er)
+            if not np.isfinite(value) or value < 1.0:
+                raise ValueError("Relative permittivity must be finite and at least 1")
+            return value
         i1 = self.layer_index(layer)
         i2 = self.layer_index(ground_layer)
         if i1 == i2:
@@ -2472,14 +2501,15 @@ class PCBCalculator:
         hi = max(i1, i2)
 
         mats = self.mat[lo:hi]
-        if not mats:
-            return 1.0
+        if len(mats) != hi - lo:
+            raise ValueError("Missing dielectric material between selected layers")
 
         ers = np.asarray([_material_er(mat, f0) for mat in mats], dtype=float)
         ths = np.abs(np.diff(self.layers))[lo:hi]
-        if ths.size != ers.size:
-            return float(np.mean(ers))
-        sw = float(np.sum(ths))
-        if sw <= 0.0:
-            return float(np.mean(ers))
-        return float(np.sum(ers * ths) / sw)
+        if ths.size != ers.size or np.any(~np.isfinite(ths)) or np.any(ths <= 0):
+            raise ValueError("Stackup layer spacing must be positive and finite")
+        if np.any(~np.isfinite(ers)) or np.any(ers < 1.0):
+            raise ValueError("Relative permittivity must be finite and at least 1")
+        if not np.allclose(ers, ers[0], rtol=1e-6, atol=0.0):
+            raise ValueError("Mixed dielectric intervals need a multilayer field solver or explicit effective-er override")
+        return float(ers[0])
