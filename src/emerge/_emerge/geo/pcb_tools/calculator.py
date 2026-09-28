@@ -1068,7 +1068,7 @@ def twisted_pair_eeff(
     if d_center <= d_wire:
         raise ValueError("d_center must be greater than d_wire for twisted pair.")
     theta = np.arctan(float(twists_per_len) * PI * d_center)
-    q = 0.001 if ptfe else 0.25 + 0.0004 * theta * theta
+    q = 0.25 + (0.001 if ptfe else 0.0004) * theta * theta
     return float(er1 + q * (er - er1))
 
 
